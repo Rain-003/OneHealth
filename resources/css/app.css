@@ -1,0 +1,52 @@
+/* Tailwind v4 global import */
+@import "tailwindcss";
+
+/* ---------- OneHealth Theme Tokens ---------- */
+/* These become usable as Tailwind colors, e.g. bg-oh-bg, text-oh-navy, bg-sidebar */
+@theme {
+  /* Brand palette */
+  --color-oh-teal: #0F8A99;
+  --color-oh-teal-dark: #0B6F7A;
+  --color-oh-bg: #E6F6F8;
+  --color-oh-navy: #203D7A;
+
+  /* Sidebar token colors used by your <Sidebar /> component */
+  --color-sidebar: var(--color-oh-teal-dark);
+  --color-sidebar-foreground: #ffffff;
+  --color-sidebar-accent: rgba(255, 255, 255, 0.10);
+  --color-sidebar-accent-foreground: #ffffff;
+  --color-sidebar-border: rgba(14, 30, 37, 0.12);
+  --color-sidebar-ring: var(--color-oh-teal);
+}
+
+/* ---------- Global base styles (no @apply needed) ---------- */
+:root { color-scheme: light; }
+
+html, body {
+  background-color: var(--color-oh-bg); /* same as bg-oh-bg */
+  color: #0f172a;                       /* slate-900 */
+}
+
+/* Optional helpers (only if you really need classnames in plain CSS) */
+.text-oh-navy     { color: var(--color-oh-navy); }
+.bg-oh-teal       { background-color: var(--color-oh-teal); }
+.bg-oh-tealDark   { background-color: var(--color-oh-teal-dark); }
+.bg-oh-tealLight  { background-color: var(--color-oh-bg); }
+
+/* Tailwind-compatible using arbitrary values */
+.scrollable {
+  scrollbar-width: thin;          /* Firefox */
+  scrollbar-color: #cbd5e1 transparent; /* thumb color + track */
+}
+
+/* Chrome, Edge, Safari */
+.scrollable::-webkit-scrollbar {
+  width: 6px;                     /* thin scrollbar */
+}
+.scrollable::-webkit-scrollbar-track {
+  background: transparent;        /* no track background */
+}
+.scrollable::-webkit-scrollbar-thumb {
+  background-color: #94a3b8;      /* slate-400 */
+  border-radius: 9999px;          /* fully rounded */
+}

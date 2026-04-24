@@ -1,0 +1,28 @@
+/* Screen & print */
+.print-doc { max-width: 900px; margin: 0 auto; padding: 24px; font: 12px/1.35 system-ui, Arial, sans-serif; color: #111; }
+.print-header { display:flex; gap:16px; align-items:center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #000; }
+.print-header .logo { width: 56px; height: 56px; }
+.print-header h1 { margin: 0; font-size: 20px; }
+.muted { color: #666; margin: 2px 0 0; }
+
+.print-section { margin: 18px 0 16px; page-break-inside: avoid; }
+.print-section h2 { font-size: 14px; margin: 0 0 8px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #444; padding: 6px 8px; vertical-align: top; }
+th { text-align: left; background: #f5f5f5; }
+.kv td:first-child { width: 28%; font-weight: 600; background: #fafafa; }
+.grid thead th { font-weight: 700; }
+
+.print-footer { margin-top: 28px; font-size: 11px; color: #555; border-top: 1px solid #ccc; padding-top: 8px; }
+
+/* Page breaks after big sections if needed */
+.print-section + .print-section { break-before: auto; }
+
+/* Print-only cleanup */
+@media print {
+  html, body { background: #fff; }
+  .no-print { display: none !important; }
+  .print-doc { box-shadow: none; margin: 0; padding: 12mm; }
+  th, td { border-color: #000; }
+}

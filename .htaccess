@@ -1,0 +1,22 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # 1. PASS SECURITY HEADERS
+    # This ensures your React app can stay logged in
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    RewriteCond %{HTTP:x-xsrf-token} .
+    RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
+
+    # 2. REDIRECT TO PUBLIC FOLDER
+    # If the request is NOT already pointing to /public...
+    RewriteCond %{REQUEST_URI} !^/public/
+    
+    # ...send it to public/ and stop processing here.
+    RewriteRule ^(.*)$ public/$1 [L,QSA]
+</IfModule>
