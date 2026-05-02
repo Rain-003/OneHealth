@@ -308,7 +308,7 @@ class PatientOwnershipRequestController extends Controller
             // ✅ Barangay sync so pregnancy pages filtered by barangay still match the new HW.
             // Only change if target HW has a barangay configured.
             if (!empty($targetBarangay)) {
-                $p->barangay = $targetBarangay;
+                $p->assigned_barangay = $targetBarangay;
 
                 // Optional: mark as transferred (matches your existing semantics)
                 // If you don't want ownership transfer to change status, comment this line.

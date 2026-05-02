@@ -13,6 +13,7 @@ class PrenatalPlan extends Model
     protected $table = 'prenatal_plans';
 
     protected $fillable = [
+        'pregnancy_id',
         'patient_id',
 
         // legacy fields (still kept so nothing else breaks)

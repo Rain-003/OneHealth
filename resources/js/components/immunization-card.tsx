@@ -172,6 +172,12 @@ const IconBell = (p: any) => (
     <path d="M13.73 21a2 2 0 0 1-3.46 0" />
   </svg>
 );
+const IconSpark = (p: any) => (
+  <svg viewBox="0 0 24 24" width="1em" height="1em" {...p} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+    <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
+  </svg>
+);
 const IconEye = (p: any) => (
   <svg viewBox="0 0 24 24" width="1em" height="1em" {...p} fill="none" stroke="currentColor" strokeWidth="1.8">
     <path d="M2.2 12s3.6-7 9.8-7 9.8 7 9.8 7-3.6 7-9.8 7-9.8-7-9.8-7Z" />
@@ -221,6 +227,49 @@ function fmtMDY(v?: string | null): string {
 function safeText(v?: string | number | null) {
   const s = String(v ?? "").trim();
   return s || "—";
+}
+
+function ordinalSuffix(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return "th";
+  switch (n % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+function displayScheduleLabel(label?: string | null): string {
+  const raw = String(label ?? "").trim();
+  if (!raw) return "";
+
+  const lower = raw.toLowerCase();
+  if (lower.includes("birth")) return "At Birth";
+
+  const week = lower.match(/^(\d+)\s*(w|wk|wks|week|weeks)\b/);
+  if (week) {
+    const n = Number(week[1]);
+    return `${n}${ordinalSuffix(n)} Week`;
+  }
+
+  const month = lower.match(/^(\d+)\s*(m|mo|mos|month|months)\b/);
+  if (month) {
+    const n = Number(month[1]);
+    return `${n}${ordinalSuffix(n)} Month`;
+  }
+
+  const year = lower.match(/^(\d+)\s*(y|yr|yrs|year|years)\b/);
+  if (year) {
+    const n = Number(year[1]);
+    return `${n}${ordinalSuffix(n)} Year`;
+  }
+
+  return raw;
 }
 
 function motherFullName(patient: PageProps["patient"]) {
@@ -529,7 +578,7 @@ function LegendModal({
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center pointer-events-none">
       <div onClick={onClose} className="absolute inset-0 bg-black/40 pointer-events-auto" aria-hidden="true" />
-      <div className="pointer-events-auto w-full max-w-md px-4">
+      <div className="pointer-events-auto w-full px-3 sm:max-w-md sm:px-4">
         <div className="relative rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 p-4 sm:p-5">
           <div className="mb-3 flex items-center justify-center">
             <h2 className="text-sm font-semibold text-slate-800 text-center">Vaccine Legend</h2>
@@ -590,8 +639,8 @@ function ScheduleAlertsPanel({
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center pointer-events-none">
       <div onClick={onClose} className="absolute inset-0 bg-black/40 pointer-events-auto" aria-hidden="true" />
-      <div className="pointer-events-auto w-full max-w-md px-4">
-        <div className="relative rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 flex flex-col max-h-[70vh] text-xs sm:text-[13px]">
+      <div className="pointer-events-auto w-full px-3 sm:max-w-md sm:px-4">
+        <div className="relative flex max-h-[80vh] flex-col rounded-2xl bg-white text-xs shadow-xl ring-1 ring-slate-200 sm:max-h-[70vh] sm:text-[13px]">
           <div className="flex items-center justify-center border-b border-slate-200 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-800 text-center">Schedule Alerts</h2>
           </div>
@@ -617,7 +666,7 @@ function ScheduleAlertsPanel({
               {nearestUpcoming ? (
                 <div className="rounded-md bg-emerald-50 border border-emerald-100 px-3 py-2">
                   <div className="font-medium text-slate-900">
-                    {toAbbrev(nearestUpcoming.vaccine)} — {nearestUpcoming.label}
+                    {toAbbrev(nearestUpcoming.vaccine)} — {displayScheduleLabel(nearestUpcoming.label)}
                   </div>
                   <div className="mt-0.5 text-[11px] text-slate-600">
                     Target date: {fmtMDY(nearestUpcoming.target)}
@@ -643,7 +692,7 @@ function ScheduleAlertsPanel({
                       className="rounded-md bg-rose-50 border border-rose-100 px-3 py-2"
                     >
                       <div className="font-medium text-slate-900">
-                        {toAbbrev(it.vaccine)} — {it.label}
+                        {toAbbrev(it.vaccine)} — {displayScheduleLabel(it.label)}
                       </div>
                       <div className="mt-0.5 text-[11px] text-rose-700">
                         Should be on or after {fmtMDY(it.target)}.
@@ -706,8 +755,8 @@ function PreviewModal({
     <div className="fixed inset-0 z-[350] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
 
-      <div className="relative w-[min(96vw,1100px)] max-h-[90vh] mx-auto">
-        <div className="rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative mx-auto h-[96vh] w-[96vw] max-w-[1200px] sm:h-auto sm:max-h-[92vh]">
+        <div className="flex h-full max-h-[96vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 sm:max-h-[92vh]">
           <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 sm:px-5 py-3 flex items-center justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-slate-900 truncate">Preview</div>
@@ -841,15 +890,15 @@ function PatientHeader({
   const [open, setOpen] = React.useState(false);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
+      <div className="p-3 sm:p-4 md:p-5">
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[12px] font-medium tracking-wide text-slate-500 uppercase">
               <IconUser className="h-4 w-4 text-[#0F8A99]" />
               Patient
             </div>
-            <h1 className="mt-1 text-xl sm:text-2xl font-bold text-slate-900 break-words">
+            <h1 className="mt-1 break-words text-lg font-bold leading-tight text-slate-900 sm:text-xl md:text-2xl">
               {safeText(patient?.full_name)}
             </h1>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -863,7 +912,7 @@ function PatientHeader({
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 h-11 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
+            className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
           >
             {open ? "Hide details" : "Show details"}
             <IconChevron className={["h-4 w-4 transition-transform", open ? "rotate-180" : ""].join(" ")} />
@@ -878,8 +927,8 @@ function PatientHeader({
         ].join(" ")}
       >
         <div className="overflow-hidden">
-          <div className="border-t border-slate-200 px-4 sm:px-5 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-10">
+          <div className="border-t border-slate-100 px-3 py-3 sm:px-4 sm:py-4 md:px-5">
+            <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 xl:grid-cols-3 xl:gap-x-10">
               <InfoRow
                 icon={<IconCalendar className="h-4 w-4 text-[#0F8A99]" />}
                 label="Birthday"
@@ -1016,7 +1065,7 @@ function HeaderChip({
   text: string;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[12px] font-medium text-slate-700">
+    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-100 sm:px-3 sm:text-[12px]">
       <span className="text-[#0F8A99]">{icon}</span>
       <span>{text}</span>
     </span>
@@ -1258,7 +1307,7 @@ export function ImmunizationCard({
 
       const givenYmd = row.date_given;
 
-      if (givenYmd < earliestYmd) violations.push(`${lbl}: date must not be earlier than ${fmtMDY(earliestYmd)}`);
+      if (givenYmd < earliestYmd) violations.push(`${displayScheduleLabel(lbl)}: date must not be earlier than ${fmtMDY(earliestYmd)}`);
 
       if (patient.birthdate) {
         const labels = matrix[vac] || [];
@@ -1268,7 +1317,7 @@ export function ImmunizationCard({
           sequentialMinDateYMD(vac, lbl, labels, labelIdx, edits, patient.birthdate) ??
           minDoseDateYMD(lbl, patient.birthdate);
 
-        if (seqMin && givenYmd < seqMin) violations.push(`${lbl}: date must be on or after ${fmtMDY(seqMin)}`);
+        if (seqMin && givenYmd < seqMin) violations.push(`${displayScheduleLabel(lbl)}: date must be on or after ${fmtMDY(seqMin)}`);
       }
     }
 
@@ -1513,11 +1562,11 @@ export function ImmunizationCard({
         .td-rem{ white-space: pre-wrap; }
       `}</style>
 
-      <main className="relative z-10 mx-auto max-w-7xl px-3 sm:px-4 md:px-6 lg:px-8 py-6">
+      <main className="relative z-10 mx-auto w-full max-w-none px-2 py-3 sm:px-3 sm:py-4 md:px-4 lg:px-6">
         <PatientHeader patient={patient} />
 
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-3 justify-between">
+        <section className="mt-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100 sm:mt-4 sm:p-4">
+          <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)_auto] lg:items-center">
             <div className="min-w-0">
               <div className="text-[15px] font-semibold text-[#203D7A]">Immunization</div>
               <div className="mt-1 h-1.5 w-full max-w-[360px] bg-slate-100 rounded-full overflow-hidden">
@@ -1531,30 +1580,30 @@ export function ImmunizationCard({
               </div>
             </div>
 
-            <div className="w-full sm:w-auto">
+            <div className="w-full min-w-0">
               <label htmlFor="schedSelect" className="sr-only">
                 Select schedule
               </label>
               <select
                 id="schedSelect"
-                className="w-full sm:w-[340px] h-10 rounded-xl border border-slate-300 px-3 text-[14px] bg-white"
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-[#0F8A99]/30"
                 value={activeIndex}
                 onChange={(e) => handleSelectChange(Number(e.target.value))}
                 title="Choose schedule"
               >
                 {schedules.map((lbl, i) => (
                   <option key={lbl} value={i}>
-                    {lbl}
+                    {displayScheduleLabel(lbl)}
                   </option>
                 ))}
               </select>
             </div>
 
-            <div className="flex items-center gap-2 ml-auto flex-wrap">
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:w-auto lg:flex-wrap lg:justify-end">
               <button
                 type="button"
                 onClick={() => setPreviewOpen(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
               >
                 <IconEye className="h-4 w-4" />
                 Preview
@@ -1563,7 +1612,7 @@ export function ImmunizationCard({
               <button
                 type="button"
                 onClick={() => setLegendOpen(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
               >
                 <IconInfo className="h-4 w-4" />
                 Legend
@@ -1573,7 +1622,7 @@ export function ImmunizationCard({
                 <button
                   type="button"
                   onClick={() => setAlertsOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                  className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
                 >
                   <IconBell className="h-4 w-4" />
                   Schedule alerts
@@ -1586,87 +1635,99 @@ export function ImmunizationCard({
                   onClick={() => setIsEditing((v) => !v)}
                   aria-pressed={isEditing}
                   className={[
-                    "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium shadow-sm",
+                    "inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-medium shadow-sm transition",
                     isEditing
-                      ? "bg-[#0F8A99] text-white border-[#0F8A99] hover:bg-[#0e7c8a]"
-                      : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50",
+                      ? "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5"
+                      : "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0e7c8a]",
                   ].join(" ")}
-                  title={isEditing ? "Lock form (disable editing)" : "Edit (enable editing)"}
+                  title={isEditing ? "Currently editing — click to lock" : "Currently locked — click to edit"}
                 >
-                  {isEditing ? <IconLock className="h-4 w-4" /> : <IconEdit className="h-4 w-4" />}
-                  {isEditing ? "Lock" : "Edit"}
+                  {isEditing ? <IconEdit className="h-4 w-4" /> : <IconLock className="h-4 w-4" />}
+                  {isEditing ? "Editing" : "Locked"}
                 </button>
               )}
             </div>
           </div>
         </section>
 
-        <section className="mt-4 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <header className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <div className="font-semibold text-slate-800 text-[15px] sm:text-[16px] truncate">{activeSchedule}</div>
+        <section className="mt-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 sm:mt-4">
+          <header className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-3 ring-1 ring-slate-200 sm:px-4">
+            <div className="font-semibold text-slate-800 text-[15px] sm:text-[16px] truncate">{displayScheduleLabel(activeSchedule)}</div>
             <div className="text-[11px] text-slate-500 uppercase tracking-wide">
               {activeIndex + 1} of {total}
             </div>
           </header>
 
-          <div className="p-3 sm:p-4">
+          <div className="p-2.5 sm:p-4">
             {isEditing && (
-              <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div className="min-w-[180px]">
-                  <div className="text-[12px] font-medium text-slate-600">Visit date (apply to all)</div>
-                  <input
-                    type="date"
-                    value={batchDate}
-                    onChange={(e) => setBatchDate(e.target.value)}
-                    className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-teal-200"
-                  />
+              <div className="mb-4 overflow-hidden rounded-2xl bg-[#0F8A99]/5 shadow-sm ring-1 ring-[#0F8A99]/25">
+                <div className="flex items-center gap-2 border-b border-[#0F8A99]/10 bg-[#0F8A99]/10 px-3 py-2 text-[#0F8A99]">
+                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-[#0F8A99] shadow-sm ring-1 ring-[#0F8A99]/15">
+                    <IconSpark className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold uppercase tracking-wide">Quick apply date</div>
+                    <div className="text-[11px] leading-snug text-slate-600">Use one visit date for all vaccines in this schedule.</div>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setBatchDate(todayYmd)}
-                  className="h-9 rounded-md border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 hover:bg-slate-100"
-                >
-                  Today
-                </button>
+                <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-[minmax(180px,1fr)_auto_auto] sm:items-end lg:grid-cols-[minmax(220px,300px)_auto_auto_minmax(0,1fr)]">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold text-slate-700">Visit date (apply to all)</div>
+                    <input
+                      type="date"
+                      value={batchDate}
+                      onChange={(e) => setBatchDate(e.target.value)}
+                      className="mt-1 h-11 w-full rounded-lg border border-[#0F8A99]/25 bg-white px-3 text-[13px] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0F8A99]/30"
+                    />
+                  </div>
 
-                <button
-                  type="button"
-                  disabled={!batchDate}
-                  onClick={() => {
-                    const ymd = toYMD(batchDate);
-                    if (!ymd) return;
-                    for (const vac of dueVaccines) {
-                      const label = activeSchedule;
-                      const allLabels = matrix[vac] || [];
-                      const index = Math.max(allLabels.indexOf(label), 0);
+                  <button
+                    type="button"
+                    onClick={() => setBatchDate(todayYmd)}
+                    className="h-11 rounded-lg border border-[#0F8A99]/30 bg-[#0F8A99]/10 px-3 text-[12px] font-semibold text-[#0F8A99] shadow-sm hover:bg-[#0F8A99]/15"
+                  >
+                    Today
+                  </button>
 
-                      const SERIES: string[] = ["dpt-hepb-hib", "opv", "pcv", "mmr"];
-                      const vacNorm = toAbbrev(vac).toLowerCase().trim();
-                      const isSeries = SERIES.some((s) => vacNorm === s || vacNorm.includes(s));
-                      const isSeriesNext = isSeries && index > 0;
+                  <button
+                    type="button"
+                    disabled={!batchDate}
+                    onClick={() => {
+                      const ymd = toYMD(batchDate);
+                      if (!ymd) return;
+                      for (const vac of dueVaccines) {
+                        const label = activeSchedule;
+                        const allLabels = matrix[vac] || [];
+                        const index = Math.max(allLabels.indexOf(label), 0);
 
-                      const minSeq = sequentialMinDateYMD(vac, label, allLabels, index, edits, patient?.birthdate);
-                      if (isSeriesNext && !minSeq) continue;
+                        const SERIES: string[] = ["dpt-hepb-hib", "opv", "pcv", "mmr"];
+                        const vacNorm = toAbbrev(vac).toLowerCase().trim();
+                        const isSeries = SERIES.some((s) => vacNorm === s || vacNorm.includes(s));
+                        const isSeriesNext = isSeries && index > 0;
 
-                      const k = `${vac}__${activeSchedule}`;
-                      setEdit(k, { date_given: ymd });
-                    }
-                    if (dueVaccines[0]) setLastEditedKey(`${dueVaccines[0]}__${activeSchedule}`);
-                  }}
-                  className="h-9 rounded-md bg-[#0F8A99] px-3 text-[12px] font-semibold text-white disabled:opacity-60"
-                  title={!batchDate ? "Pick a date first" : "Apply this date to all vaccines in this visit"}
-                >
-                  Apply to all
-                </button>
+                        const minSeq = sequentialMinDateYMD(vac, label, allLabels, index, edits, patient?.birthdate);
+                        if (isSeriesNext && !minSeq) continue;
 
-                <div className="ml-auto text-[12px] text-slate-500">
-                  Tip: set one date, then just add remarks per vaccine if needed.
+                        const k = `${vac}__${activeSchedule}`;
+                        setEdit(k, { date_given: ymd });
+                      }
+                      if (dueVaccines[0]) setLastEditedKey(`${dueVaccines[0]}__${activeSchedule}`);
+                    }}
+                    className="h-11 rounded-lg bg-[#0F8A99] px-3 text-[12px] font-semibold text-white shadow-sm hover:bg-[#0e7c8a] disabled:opacity-60"
+                    title={!batchDate ? "Pick a date first" : "Apply this date to all vaccines in this visit"}
+                  >
+                    Apply to all
+                  </button>
+
+                  <div className="self-center rounded-lg bg-white/70 px-3 py-2 text-[12px] text-slate-600 ring-1 ring-[#0F8A99]/10 lg:text-right">
+                    Tip: set one date, then just add remarks per vaccine if needed.
+                  </div>
                 </div>
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {dueVaccines.map((vac) => {
                 const label = activeSchedule;
                 const allLabels = matrix[vac] || [];
@@ -1698,20 +1759,20 @@ export function ImmunizationCard({
                 const minInputYmd = effectiveMinYmd && effectiveMinYmd > earliestYmd ? effectiveMinYmd : earliestYmd;
 
                 const inputClass = [
-                  "flex-1 h-10 min-h-[2.5rem] w-full rounded-md border px-2 py-1 text-[13px] sm:text-[14px] leading-tight focus:outline-none focus:ring-1 disabled:opacity-60 disabled:cursor-not-allowed",
+                  "h-11 min-h-[44px] w-full flex-1 rounded-lg border px-3 text-[13px] leading-tight focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 sm:h-10 sm:text-[14px]",
                   invalid ? "border-rose-400 bg-rose-50/40 focus:ring-rose-300" : "border-slate-200 focus:ring-teal-200",
                 ].join(" ");
 
                 return (
-                  <article key={`${vac}__${label}`} className="rounded-lg border border-slate-200 bg-white p-3 min-w-0">
+                  <article key={`${vac}__${label}`} className="min-w-0 rounded-xl border-l-4 border-l-[#0F8A99]/30 bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
                     <h3 className="font-medium text-slate-800 text-[14px] truncate">{toAbbrev(vac)}</h3>
-                    <div className="mt-0.5 text-[11px] text-slate-500">{label}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">{displayScheduleLabel(label)}</div>
 
                     <div className="mt-2 text-[14px]">
                       <div className="text-slate-600">Date</div>
                       {isEditing ? (
                         <>
-                          <div className="mt-1 flex items-center gap-2">
+                          <div className="mt-1 flex flex-col gap-2 min-[430px]:flex-row min-[430px]:items-center">
                             <input
                               type="date"
                               min={minInputYmd}
@@ -1731,7 +1792,7 @@ export function ImmunizationCard({
                                 setEdit(key, { date_given: todayYmd });
                                 setLastEditedKey(key);
                               }}
-                              className="shrink-0 h-9 rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-[12px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                              className="h-11 shrink-0 rounded-lg border border-[#0F8A99]/30 bg-[#0F8A99]/10 px-3 text-[12px] font-semibold text-[#0F8A99] shadow-sm hover:bg-[#0F8A99]/15 disabled:cursor-not-allowed disabled:opacity-60 min-[430px]:h-10"
                               disabled={prereqMissing}
                             >
                               Today
@@ -1771,7 +1832,7 @@ export function ImmunizationCard({
                           value={edit?.remarks ?? ""}
                           onChange={(e) => setEdit(key, { remarks: e.target.value || null })}
                           placeholder="Remarks (optional)"
-                          className="mt-2 w-full min-h-[72px] rounded-md border border-slate-200 px-2 py-1 text-[14px]"
+                          className="mt-2 min-h-[88px] w-full rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2 text-[14px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0F8A99]/25"
                         />
                       ) : hasRemarks ? (
                         <>
@@ -1797,16 +1858,16 @@ export function ImmunizationCard({
             </div>
 
             {isEditing && (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
+              <div className="mt-4 grid grid-cols-1 gap-2 border-t border-slate-100 pt-4 sm:flex sm:flex-wrap sm:items-center">
                 <button
                   type="button"
                   onClick={onSaveClick}
                   disabled={saving}
-                  className="rounded-md bg-[#0F8A99] text-white px-4 py-2 disabled:opacity-60"
+                  className="h-11 rounded-lg bg-[#0F8A99] px-4 font-semibold text-white disabled:opacity-60"
                 >
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button type="button" onClick={cancelActive} className="rounded-md border border-slate-200 px-4 py-2">
+                <button type="button" onClick={cancelActive} className="h-11 rounded-lg border border-slate-200 px-4 font-medium text-slate-700">
                   Cancel
                 </button>
               </div>
@@ -1863,7 +1924,7 @@ function InfoRow({
   const show = (value ?? "").toString().trim() || "—";
   return (
     <div className={["py-1.5", className].join(" ")}>
-      <div className="flex items-start gap-3 pb-2 border-b border-slate-200/60">
+      <div className="flex items-start gap-3 rounded-xl bg-slate-50/60 p-2 ring-1 ring-slate-100">
         <div className="mt-0.5 text-slate-500">{icon ?? null}</div>
         <div className="min-w-0 w-full">
           <div className="text-[12px] font-medium tracking-wide text-slate-600">{label}</div>

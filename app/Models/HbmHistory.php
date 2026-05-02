@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\YesNo;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Concerns\BelongsToBarangayUser;
+use App\Models\Pregnancy;
 
 class HbmHistory extends Model
 {
@@ -32,6 +33,7 @@ class HbmHistory extends Model
         'diabetes_current',            // enum: oo | hindi | null
         'asthma_current',              // enum: oo | hindi | null
         'goiter_current',              // enum: oo | hindi | null
+        'pregnancy_id',
     ];
 
     protected $casts = [
@@ -64,5 +66,4 @@ class HbmHistory extends Model
         return $value?->value === YesNo::Oo->value;
     }
 
-    // Example usage: $model->isYes($model->tb_current)
 }

@@ -12,6 +12,10 @@ type Record = {
   record_type: RecordType;
   patient?: {
     full_name?: string | null;
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    suffix?: string | null;
     patient_type?: PatientType | null;
     barangay?: string | null;
     owner?: { name?: string | null; barangay?: string | null } | null;
@@ -26,6 +30,99 @@ type Props = {
   filters: { record_type?: RecordType | ''; sort?: 'latest' | 'oldest' };
   dashboardUrl: string;
 };
+
+const KNOWN_SUFFIXES = new Set(['JR', 'SR', 'II', 'III', 'IV', 'V']);
+
+function cleanNamePart(value?: string | null): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function middleInitial(value?: string | null): string {
+  const middle = cleanNamePart(value);
+  if (!middle) return '';
+
+  const firstMiddleWord = middle.split(/\s+/).find(Boolean);
+  if (!firstMiddleWord) return '';
+
+  const letter = firstMiddleWord.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ]/g, '').charAt(0);
+  return letter ? `${letter.toUpperCase()}.` : '';
+}
+
+function splitFullNameFallback(fullName?: string | null) {
+  const raw = cleanNamePart(fullName);
+  if (!raw) {
+    return { first_name: '', middle_name: '', last_name: '', suffix: '' };
+  }
+
+  const parts = raw.split(/\s+/).filter(Boolean);
+
+  let suffix = '';
+  if (parts.length > 1) {
+    const lastToken = parts[parts.length - 1].replace(/\./g, '').toUpperCase();
+    if (KNOWN_SUFFIXES.has(lastToken)) {
+      suffix = parts.pop() ?? '';
+    }
+  }
+
+  if (parts.length === 1) {
+    return {
+      first_name: parts[0] ?? '',
+      middle_name: '',
+      last_name: '',
+      suffix,
+    };
+  }
+
+  if (parts.length === 2) {
+    return {
+      first_name: parts[0] ?? '',
+      middle_name: '',
+      last_name: parts[1] ?? '',
+      suffix,
+    };
+  }
+
+  return {
+    first_name: parts[0] ?? '',
+    middle_name: parts.slice(1, -1).join(' '),
+    last_name: parts[parts.length - 1] ?? '',
+    suffix,
+  };
+}
+
+function formatPatientDisplayName(patient?: Record['patient'] | null): string {
+  if (!patient) return '—';
+
+  const hasSplitName = Boolean(
+    cleanNamePart(patient.first_name) ||
+      cleanNamePart(patient.middle_name) ||
+      cleanNamePart(patient.last_name) ||
+      cleanNamePart(patient.suffix)
+  );
+
+  const parts = hasSplitName
+    ? {
+        first_name: cleanNamePart(patient.first_name),
+        middle_name: cleanNamePart(patient.middle_name),
+        last_name: cleanNamePart(patient.last_name),
+        suffix: cleanNamePart(patient.suffix),
+      }
+    : splitFullNameFallback(patient.full_name);
+
+  const last = cleanNamePart(parts.last_name);
+  const first = cleanNamePart(parts.first_name);
+  const middle = middleInitial(parts.middle_name);
+  const suffix = cleanNamePart(parts.suffix);
+
+  if (!last && !first && !middle && !suffix) {
+    return cleanNamePart(patient.full_name) || '—';
+  }
+
+  const firstLine = [first, middle].filter(Boolean).join(' ');
+  const main = last && firstLine ? `${last}, ${firstLine}` : last || firstLine;
+
+  return suffix ? `${main}, ${suffix}` : main;
+}
 
 export default function AllRecords() {
   const { props } = usePage<Props>();
@@ -133,7 +230,7 @@ export default function AllRecords() {
                       {r.patient ? (
                         <>
                           <Link href={`/center/records/${r.patient_id}`} className="underline">
-                            {r.patient.full_name ?? '—'}
+                            {formatPatientDisplayName(r.patient)}
                           </Link>
                           {r.patient.patient_type && (
                             <Badge>{r.patient.patient_type}</Badge>

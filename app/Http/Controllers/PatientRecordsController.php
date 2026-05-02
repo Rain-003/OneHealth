@@ -29,14 +29,31 @@ class PatientRecordsController extends Controller
         return ($u?->role === 'admin');
     }
 
+    private function sameBarangay(?string $a, ?string $b): bool
+    {
+        $a = trim(mb_strtolower((string) $a));
+        $b = trim(mb_strtolower((string) $b));
+
+        return $a !== '' && $b !== '' && $a === $b;
+    }
+
     private function canEditPatient(?User $u, PatientsModel $patient): bool
     {
-        if (!$u)
+        if (!$u) {
             return false;
-        if ($this->isAdmin($u))
-            return true;
+        }
 
-        return $patient->owner_id && (int) $patient->owner_id === (int) $u->id;
+        if ($this->isAdmin($u)) {
+            return true;
+        }
+
+        // Exact owner can edit.
+        if ($patient->owner_id && (int) $patient->owner_id === (int) $u->id) {
+            return true;
+        }
+
+        // Barangay team can edit.
+        return $this->sameBarangay($patient->assigned_barangay, $u->barangay);
     }
 
     private function ensureCanEditPatient(Request $request, PatientsModel $patient): void
@@ -53,6 +70,108 @@ class PatientRecordsController extends Controller
         if (Route::has('dashboard'))
             return route('dashboard');
         return url('/center');
+    }
+
+    /* Patient name helpers: keeps full_name and split name columns in sync. */
+
+    private function cleanNamePart($value): ?string
+    {
+        $value = trim(preg_replace('/\\s+/', ' ', (string) ($value ?? '')));
+        return $value === '' ? null : mb_strtoupper($value);
+    }
+
+    private function cleanSuffix($value): ?string
+    {
+        $value = trim(preg_replace('/\\s+/', ' ', (string) ($value ?? '')));
+        if ($value === '') {
+            return null;
+        }
+
+        return mb_strtoupper(str_replace('.', '', $value));
+    }
+
+    private function buildFullNameFromParts(array $data): string
+    {
+        return trim(implode(' ', array_filter([
+            $this->cleanNamePart($data['first_name'] ?? null),
+            $this->cleanNamePart($data['middle_name'] ?? null),
+            $this->cleanNamePart($data['last_name'] ?? null),
+            $this->cleanSuffix($data['suffix'] ?? null),
+        ], fn($value) => $value !== null && $value !== '')));
+    }
+
+    private function splitFullNameFallback(?string $fullName): array
+    {
+        $raw = trim(preg_replace('/\\s+/', ' ', (string) ($fullName ?? '')));
+        if ($raw === '') {
+            return [
+                'first_name' => null,
+                'middle_name' => null,
+                'last_name' => null,
+                'suffix' => null,
+            ];
+        }
+
+        $suffixes = ['JR', 'SR', 'II', 'III', 'IV', 'V'];
+        $parts = preg_split('/\\s+/', $raw) ?: [];
+
+        $suffix = null;
+        if (count($parts) > 1) {
+            $candidate = mb_strtoupper(str_replace('.', '', (string) end($parts)));
+            if (in_array($candidate, $suffixes, true)) {
+                $suffix = array_pop($parts);
+            }
+        }
+
+        if (count($parts) === 1) {
+            return [
+                'first_name' => $this->cleanNamePart($parts[0] ?? null),
+                'middle_name' => null,
+                'last_name' => null,
+                'suffix' => $this->cleanSuffix($suffix),
+            ];
+        }
+
+        $firstName = array_shift($parts);
+        $lastName = array_pop($parts);
+
+        return [
+            'first_name' => $this->cleanNamePart($firstName),
+            'middle_name' => $this->cleanNamePart(implode(' ', $parts)),
+            'last_name' => $this->cleanNamePart($lastName),
+            'suffix' => $this->cleanSuffix($suffix),
+        ];
+    }
+
+    private function normalizePatientNameData(array $data): array
+    {
+        $hasSplitNameInput = array_key_exists('first_name', $data)
+            || array_key_exists('middle_name', $data)
+            || array_key_exists('last_name', $data)
+            || array_key_exists('suffix', $data);
+
+        if ($hasSplitNameInput) {
+            $data['first_name'] = $this->cleanNamePart($data['first_name'] ?? null);
+            $data['middle_name'] = $this->cleanNamePart($data['middle_name'] ?? null);
+            $data['last_name'] = $this->cleanNamePart($data['last_name'] ?? null);
+            $data['suffix'] = $this->cleanSuffix($data['suffix'] ?? null);
+
+            $builtFullName = $this->buildFullNameFromParts($data);
+            if ($builtFullName !== '') {
+                $data['full_name'] = $builtFullName;
+            } elseif (!empty($data['full_name'])) {
+                $data['full_name'] = $this->cleanNamePart($data['full_name']);
+            }
+
+            return $data;
+        }
+
+        if (!empty($data['full_name'])) {
+            $data['full_name'] = $this->cleanNamePart($data['full_name']);
+            $data = array_merge($data, $this->splitFullNameFallback($data['full_name']));
+        }
+
+        return $data;
     }
 
     /* ──────────────────────────────────────────────────────────────────────
@@ -366,13 +485,23 @@ class PatientRecordsController extends Controller
         $query = PatientsModel::query()->with(['owner:id,name,barangay']);
 
         if (!$this->isAdmin($user) && $scope !== 'all') {
-            $query->where('owner_id', $user?->id);
+            $query->where(function ($q) use ($user) {
+                $q->where('owner_id', $user?->id);
+
+                if (!empty($user?->barangay)) {
+                    $q->orWhere('assigned_barangay', $user->barangay);
+                }
+            });
         }
 
         if ($q !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
             $query->where(function ($sub) use ($like) {
                 $sub->where('full_name', 'like', $like)
+                    ->orWhere('first_name', 'like', $like)
+                    ->orWhere('middle_name', 'like', $like)
+                    ->orWhere('last_name', 'like', $like)
+                    ->orWhere('suffix', 'like', $like)
                     ->orWhere('barangay', 'like', $like)
                     ->orWhere('family_no', 'like', $like);
             });
@@ -411,6 +540,10 @@ class PatientRecordsController extends Controller
                 return [
                     'id' => $p->id,
                     'full_name' => $p->full_name,
+                    'first_name' => $p->first_name,
+                    'middle_name' => $p->middle_name,
+                    'last_name' => $p->last_name,
+                    'suffix' => $p->suffix,
                     'birthdate' => optional($p->birthdate)->toDateString() ?? ($p->birthdate ?? null),
                     'barangay' => $p->barangay,
                     'family_no' => $p->family_no,
@@ -457,7 +590,7 @@ class PatientRecordsController extends Controller
         $records = PatientRecord::query()
             ->select(['id', 'patient_id', 'visit_date', 'title', 'record_type', 'created_at'])
             ->with([
-                'patient:id,full_name,patient_type,barangay,owner_id',
+                'patient:id,full_name,first_name,middle_name,last_name,suffix,patient_type,barangay,owner_id',
                 'patient.owner:id,name,barangay',
             ])
             ->when($type, fn($q) => $q->where('record_type', $type))
@@ -555,103 +688,119 @@ class PatientRecordsController extends Controller
      |  Patient updates
      |  ────────────────────────────────────────────────────────────────────── */
 
-public function updatePatient(Request $request, PatientsModel $patient)
-{
-    $this->ensureCanEditPatient($request, $patient);
+    public function updatePatient(Request $request, PatientsModel $patient)
+    {
+        $this->ensureCanEditPatient($request, $patient);
 
-    $data = $request->validate([
-        'full_name'      => ['required','string','max:255'],
-        'birthdate'      => ['nullable','date'],
-        'sex'            => ['nullable','string','max:20'],
-        'barangay'       => ['nullable','string','max:255'],
-        'address'        => ['nullable','string','max:255'],
-        'health_center'  => ['nullable','string','max:255'],
-        'family_no'      => ['nullable','string','max:50'],
-        'mother_name'    => ['nullable','string','max:150'],
-        'father_name'    => ['nullable','string','max:150'],
-        'contact_no'     => ['nullable','string','max:32'],
-        'phone'          => ['nullable','string','max:32'],
-        'place_of_birth' => ['nullable','string','max:255'],
-        'civil_status'   => ['nullable','string','max:50'],
-        'philhealth_no'  => ['nullable','string','max:50'],
-        'height_cm'      => ['nullable','numeric'],
-        'status'         => ['required','string','in:active,deceased,transferred,left_without_notice'],
-    ]);
+        $data = $request->validate([
+            'full_name' => ['required_without:first_name', 'nullable', 'string', 'max:255'],
+            'first_name' => ['nullable', 'string', 'max:100'],
+            'middle_name' => ['nullable', 'string', 'max:100'],
+            'last_name' => ['nullable', 'string', 'max:100'],
+            'suffix' => ['nullable', 'string', 'max:20'],
+            'birthdate' => ['nullable', 'date'],
+            'sex' => ['nullable', 'string', 'max:20'],
+            'barangay' => ['nullable', 'string', 'max:255'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'health_center' => ['nullable', 'string', 'max:255'],
+            'family_no' => ['nullable', 'string', 'max:50'],
+            'mother_name' => ['nullable', 'string', 'max:150'],
+            'father_name' => ['nullable', 'string', 'max:150'],
+            'contact_no' => ['nullable', 'string', 'max:32'],
+            'phone' => ['nullable', 'string', 'max:32'],
+            'place_of_birth' => ['nullable', 'string', 'max:255'],
+            'civil_status' => ['nullable', 'string', 'max:50'],
+            'philhealth_no' => ['nullable', 'string', 'max:50'],
+            'height_cm' => ['nullable', 'numeric'],
+            'status' => ['required', 'string', 'in:active,deceased,transferred,left_without_notice'],
+        ]);
 
-    if (array_key_exists('birthdate', $data) && $data['birthdate']) {
-        $data['birthdate'] = Carbon::parse($data['birthdate'])->toDateString();
-    }
+        $data = $this->normalizePatientNameData($data);
 
-    if (
-        (!array_key_exists('contact_no', $data) || $data['contact_no'] === null || $data['contact_no'] === '') &&
-        array_key_exists('phone', $data)
-    ) {
-        $data['contact_no'] = $data['phone'];
-    }
-
-    if (array_key_exists('contact_no', $data) && $data['contact_no'] !== null) {
-        $digits = preg_replace('/\D/', '', (string) $data['contact_no']);
-        if ($digits !== '') {
-            if (strlen($digits) === 10 && str_starts_with($digits, '9')) {
-                $data['contact_no'] = '0' . $digits;
-            } else {
-                $data['contact_no'] = $digits;
-            }
-        } else {
-            $data['contact_no'] = null;
+        if (empty($data['full_name'])) {
+            return back()
+                ->withErrors(['full_name' => 'Patient name is required.'])
+                ->withInput();
         }
+
+        if (array_key_exists('birthdate', $data) && $data['birthdate']) {
+            $data['birthdate'] = Carbon::parse($data['birthdate'])->toDateString();
+        }
+
+        if (
+            (!array_key_exists('contact_no', $data) || $data['contact_no'] === null || $data['contact_no'] === '') &&
+            array_key_exists('phone', $data)
+        ) {
+            $data['contact_no'] = $data['phone'];
+        }
+
+        if (array_key_exists('contact_no', $data) && $data['contact_no'] !== null) {
+            $digits = preg_replace('/\D/', '', (string) $data['contact_no']);
+            if ($digits !== '') {
+                if (strlen($digits) === 10 && str_starts_with($digits, '9')) {
+                    $data['contact_no'] = '0' . $digits;
+                } else {
+                    $data['contact_no'] = $digits;
+                }
+            } else {
+                $data['contact_no'] = null;
+            }
+        }
+
+        unset($data['phone']);
+
+        $before = $patient->only([
+            'full_name',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'suffix',
+            'birthdate',
+            'sex',
+            'barangay',
+            'address',
+            'health_center',
+            'family_no',
+            'mother_name',
+            'father_name',
+            'contact_no',
+            'place_of_birth',
+            'civil_status',
+            'philhealth_no',
+            'height_cm',
+            'status',
+        ]);
+
+        $patient->fill($data);
+        $patient->save();
+
+        if (($data['status'] ?? null) === 'deceased') {
+            Appointment::where('patient_id', $patient->id)
+                ->whereIn('source_type', ['immunization_schedule', 'prenatal_next_visit'])
+                ->delete();
+        }
+
+        $after = $patient->only(array_keys($before));
+
+        if (
+            array_key_exists('birthdate', $data) ||
+            array_key_exists('barangay', $data) ||
+            array_key_exists('status', $data)
+        ) {
+            $this->rebuildScheduleForPatient($patient);
+        }
+
+        Activity::record('patient.updated', [
+            'patient_id' => $patient->id,
+            'description' => 'Updated patient demographic information.',
+            'properties' => [
+                'before' => $before,
+                'after' => $after,
+            ],
+        ]);
+
+        return back()->with('status', 'Patient details updated.');
     }
-
-    unset($data['phone']);
-
-    $before = $patient->only([
-        'full_name',
-        'birthdate',
-        'sex',
-        'barangay',
-        'address',
-        'health_center',
-        'family_no',
-        'mother_name',
-        'father_name',
-        'contact_no',
-        'place_of_birth',
-        'civil_status',
-        'philhealth_no',
-        'height_cm',
-        'status',
-    ]);
-
-    $patient->fill($data);
-    $patient->save();
-
-    if (($data['status'] ?? null) === 'deceased') {
-        Appointment::where('patient_id', $patient->id)
-            ->whereIn('source_type', ['immunization_schedule', 'prenatal_next_visit'])
-            ->delete();
-    }
-
-    $after = $patient->only(array_keys($before));
-
-    if (
-        array_key_exists('birthdate', $data) ||
-        array_key_exists('barangay', $data) ||
-        array_key_exists('status', $data)
-    ) {
-        $this->rebuildScheduleForPatient($patient);
-    }
-
-    Activity::record('patient.updated', [
-        'patient_id'  => $patient->id,
-        'description' => 'Updated patient demographic information.',
-        'properties'  => [
-            'before' => $before,
-            'after'  => $after,
-        ],
-    ]);
-
-    return back()->with('status', 'Patient details updated.');
-}
 
     public function updateStatus(Request $request, PatientsModel $patient)
     {
@@ -1224,7 +1373,7 @@ public function updatePatient(Request $request, PatientsModel $patient)
     public function rebuildCenterSchedule(): void
     {
         $patients = PatientsModel::query()
-            ->select(['id', 'full_name', 'barangay', 'birthdate', 'patient_type', 'status', 'prenatal_hbm_current'])
+            ->select(['id', 'full_name', 'first_name', 'middle_name', 'last_name', 'suffix', 'barangay', 'birthdate', 'patient_type', 'status', 'prenatal_hbm_current'])
             ->get();
 
         foreach ($patients as $patient) {
@@ -1405,7 +1554,7 @@ public function updatePatient(Request $request, PatientsModel $patient)
                 $q->whereNull('status')
                     ->orWhere('status', '!=', 'deceased');
             })
-            ->select(['id', 'full_name', 'barangay', 'birthdate']);
+            ->select(['id', 'full_name', 'first_name', 'middle_name', 'last_name', 'suffix', 'barangay', 'birthdate']);
 
         if ($user && $user->role !== 'admin' && !empty($user->barangay)) {
             $patientsQuery->where('barangay', $user->barangay);

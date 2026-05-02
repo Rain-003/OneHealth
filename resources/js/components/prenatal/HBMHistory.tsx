@@ -466,7 +466,7 @@ function YNChips({
         className={`${base} ${noCls} ${disabledCls}`}
         onClick={() => {
           if (disabled) return;
-          onChange("hindi");
+          onChange(noActive ? null : "hindi");
         }}
         aria-pressed={noActive}
         disabled={disabled}
@@ -478,7 +478,7 @@ function YNChips({
         className={`${base} ${yesCls} ${disabledCls}`}
         onClick={() => {
           if (disabled) return;
-          onChange("oo");
+          onChange(yesActive ? null : "oo");
         }}
         aria-pressed={yesActive}
         disabled={disabled}
@@ -939,25 +939,18 @@ export default function HBMHistory(props: HBMTabProps) {
               <button
                 type="button"
                 onClick={() => setLocked((v) => !v)}
+                aria-pressed={!locked}
                 className={[
-                  "inline-flex h-9 w-9 items-center justify-center border rounded-md text-xs font-medium transition-colors",
+                  "inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium shadow-sm transition",
+                  "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]",
                   locked
-                    ? "bg-slate-100 border-slate-200 text-slate-600 bg-white shadow-sm"
-                    : "text-white",
+                    ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]"
+                    : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
                 ].join(" ")}
-                style={
-                  locked
-                    ? undefined
-                    : { backgroundColor: TEAL, borderColor: TEAL }
-                }
-                aria-pressed={!locked ? "true" : "false"}
-                title={locked ? "Unlock to edit" : "Lock record"}
+                title={locked ? "Record is locked" : "Editing enabled"}
               >
-                {locked ? (
-                  <IconLock className="h-4 w-4" />
-                ) : (
-                  <IconUnlock className="h-4 w-4" />
-                )}
+                {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+                <span>{locked ? "Locked" : "Editing"}</span>
               </button>
             </div>
           </div>
@@ -1110,7 +1103,9 @@ export default function HBMHistory(props: HBMTabProps) {
                                   setPrevPreg(
                                     locked
                                       ? dataRef.current.prev_pregnancies
-                                      : n
+                                      : active
+                                        ? null
+                                        : n
                                   )
                                 }
                                 className={[

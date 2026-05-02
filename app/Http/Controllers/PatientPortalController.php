@@ -6,7 +6,9 @@ use App\Models\Announcement;
 use App\Models\Appointment;
 use App\Models\ImmunizationRecord;
 use App\Models\PatientsModel;
+use App\Models\Pregnancy;
 use App\Models\PrenatalVisit;
+use App\Http\Controllers\Prenatal\Concerns\ResolvesPregnancy;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -14,6 +16,7 @@ use Inertia\Inertia;
 
 class PatientPortalController extends Controller
 {
+    use ResolvesPregnancy;
     /**
      * Resolve the currently authenticated patient (patient guard).
      */
@@ -23,6 +26,65 @@ class PatientPortalController extends Controller
         $patient = auth('patient')->user();
         abort_if(!$patient, 401, 'Patient not authenticated.');
         return $patient;
+    }
+
+    protected function formatPatientDisplayName(PatientsModel $patient): string
+    {
+        $first = trim((string) ($patient->first_name ?? ''));
+        $middle = trim((string) ($patient->middle_name ?? ''));
+        $last = trim((string) ($patient->last_name ?? ''));
+        $suffix = trim((string) ($patient->suffix ?? ''));
+
+        if ($first !== '' || $middle !== '' || $last !== '' || $suffix !== '') {
+            $middleInitial = $middle !== ''
+                ? Str::upper(Str::substr(Str::of($middle)->squish()->__toString(), 0, 1)) . '.'
+                : '';
+
+            $given = trim(implode(' ', array_filter([
+                Str::of($first)->squish()->__toString(),
+                $middleInitial,
+            ])));
+
+            $display = trim($last);
+
+            if ($given !== '') {
+                $display .= ($display !== '' ? ', ' : '') . $given;
+            }
+
+            if ($suffix !== '') {
+                $display .= ($display !== '' ? ', ' : '') . Str::of($suffix)->squish()->__toString();
+            }
+
+            return $display !== '' ? Str::upper($display) : 'Unnamed patient';
+        }
+
+        return trim((string) ($patient->full_name ?? '')) ?: 'Unnamed patient';
+    }
+
+    protected function patientPayload(PatientsModel $patient): array
+    {
+        return array_merge($patient->toArray(), [
+            'display_name' => $this->formatPatientDisplayName($patient),
+            'formal_name' => $this->formatPatientDisplayName($patient),
+        ]);
+    }
+
+    protected function pregnancyPayload(?Pregnancy $pregnancy): ?array
+    {
+        if (!$pregnancy) {
+            return null;
+        }
+
+        return [
+            'id' => $pregnancy->id,
+            'patient_id' => $pregnancy->patient_id,
+            'pregnancy_no' => $pregnancy->pregnancy_no,
+            'lmp' => optional($pregnancy->lmp)->toDateString(),
+            'edd' => optional($pregnancy->edd)->toDateString(),
+            'status' => $pregnancy->status,
+            'outcome' => $pregnancy->outcome,
+            'completed_at' => optional($pregnancy->completed_at)->toDateString(),
+        ];
     }
 
     /**
@@ -36,7 +98,7 @@ class PatientPortalController extends Controller
         $today = Carbon::today(config('app.timezone'));
 
         return $rows
-            ->filter(fn ($a) => !empty($a->date))
+            ->filter(fn($a) => !empty($a->date))
             ->map(function (Appointment $a) use ($today) {
                 $d = $a->date instanceof Carbon
                     ? $a->date->copy()
@@ -47,9 +109,9 @@ class PatientPortalController extends Controller
                     : ($d->isPast() ? 'done' : 'upcoming');
 
                 return [
-                    'id'     => $a->id,
-                    'date'   => $d->toDateString(),
-                    'title'  => $a->title ?? 'Clinic Visit',
+                    'id' => $a->id,
+                    'date' => $d->toDateString(),
+                    'title' => $a->title ?? 'Clinic Visit',
                     'status' => $status,
                 ];
             })
@@ -285,7 +347,7 @@ class PatientPortalController extends Controller
                     ],
                     'source_type' => 'synthetic_immunization_schedule',
                     'patient_id' => $patient->id,
-                    'patient_name' => $patient->full_name,
+                    'patient_name' => $this->formatPatientDisplayName($patient),
                     'barangay' => $patient->barangay,
                     'status' => $status,
                     'given_date' => $givenYmd,
@@ -301,13 +363,28 @@ class PatientPortalController extends Controller
     /**
      * Patient-only prenatal schedule feed using the HW schedule logic.
      */
-    protected function buildPrenatalScheduleAppointmentsForPatient(PatientsModel $patient)
+    protected function buildPrenatalScheduleAppointmentsForPatient(PatientsModel $patient, ?Pregnancy $pregnancy = null)
     {
+        $pregnancy = $pregnancy ?: $this->activePregnancyFor($patient);
+
+        if (!$pregnancy) {
+            return collect();
+        }
+
         $rows = Appointment::query()
             ->where('patient_id', $patient->id)
             ->whereIn('source_type', [
                 'prenatal_next_visit',
             ])
+            ->where(function ($q) use ($pregnancy) {
+                $q->whereNull('notes')
+                    ->orWhere('notes', '')
+                    ->orWhere('notes', 'not like', '%"pregnancy_id"%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id":' . $pregnancy->id . '%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id": ' . $pregnancy->id . '%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id":"' . $pregnancy->id . '"%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id": "' . $pregnancy->id . '"%');
+            })
             ->orderBy('date')
             ->get([
                 'id',
@@ -322,11 +399,21 @@ class PatientPortalController extends Controller
         $doneAppointments = Appointment::query()
             ->where('patient_id', $patient->id)
             ->whereIn('source_type', ['record', 'prenatal_current_visit'])
+            ->where(function ($q) use ($pregnancy) {
+                $q->whereNull('notes')
+                    ->orWhere('notes', '')
+                    ->orWhere('notes', 'not like', '%"pregnancy_id"%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id":' . $pregnancy->id . '%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id": ' . $pregnancy->id . '%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id":"' . $pregnancy->id . '"%')
+                    ->orWhere('notes', 'like', '%"pregnancy_id": "' . $pregnancy->id . '"%');
+            })
             ->orderBy('date')
             ->get();
 
         $prenatalVisits = PrenatalVisit::query()
             ->where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
             ->whereNotNull('visit_date')
             ->orderBy('visit_date')
             ->get(['patient_id', 'visit_date']);
@@ -345,7 +432,7 @@ class PatientPortalController extends Controller
             $hasRecord = false;
             $scheduleDate = (string) $row->date;
 
-            $matchedVisit = $prenatalVisits->first(fn ($v) => (string) $v->visit_date >= $scheduleDate);
+            $matchedVisit = $prenatalVisits->first(fn($v) => (string) $v->visit_date >= $scheduleDate);
 
             if ($matchedVisit) {
                 $status = 'done';
@@ -354,7 +441,7 @@ class PatientPortalController extends Controller
             }
 
             if (!$hasRecord) {
-                $matchedDone = $doneAppointments->first(fn ($appt) => (string) $appt->date >= $scheduleDate);
+                $matchedDone = $doneAppointments->first(fn($appt) => (string) $appt->date >= $scheduleDate);
 
                 if ($matchedDone) {
                     $status = 'done';
@@ -381,7 +468,7 @@ class PatientPortalController extends Controller
                 'meta' => $meta,
                 'source_type' => $row->source_type,
                 'patient_id' => $patient->id,
-                'patient_name' => $patient->full_name,
+                'patient_name' => $this->formatPatientDisplayName($patient),
                 'barangay' => $patient->barangay,
                 'status' => $status,
                 'given_date' => $givenDate,
@@ -401,7 +488,13 @@ class PatientPortalController extends Controller
         }
 
         if ($patient->patient_type === 'pregnancy') {
-            return $this->buildPrenatalScheduleAppointmentsForPatient($patient)
+            $pregnancy = $this->activePregnancyFor($patient);
+
+            if (!$pregnancy) {
+                return collect();
+            }
+
+            return $this->buildPrenatalScheduleAppointmentsForPatient($patient, $pregnancy)
                 ->sortBy('date')
                 ->values();
         }
@@ -440,6 +533,9 @@ class PatientPortalController extends Controller
         $patient = $this->resolvePatient($request);
         $today = Carbon::today(config('app.timezone'));
         $announcements = $this->loadAnnouncementsForPortal();
+        $activePregnancy = $patient->patient_type === 'pregnancy'
+            ? $this->activePregnancyFor($patient)
+            : null;
 
         $rows = Appointment::query()
             ->where('patient_id', $patient->id)
@@ -455,7 +551,8 @@ class PatientPortalController extends Controller
             ->first();
 
         return Inertia::render('patients/dashboard', [
-            'patient' => $patient,
+            'patient' => $this->patientPayload($patient),
+            'activePregnancy' => $this->pregnancyPayload($activePregnancy),
             'appointments' => $this->mapAppointments($rows),
             'today' => $today->toDateString(),
             'nextAppointment' => $next
@@ -471,6 +568,9 @@ class PatientPortalController extends Controller
         $patient = $this->resolvePatient($request);
         $today = Carbon::today(config('app.timezone'));
         $announcements = $this->loadAnnouncementsForPortal();
+        $activePregnancy = $patient->patient_type === 'pregnancy'
+            ? $this->activePregnancyFor($patient)
+            : null;
 
         $appointments = $this->getPatientScheduleFeed($patient);
 
@@ -479,7 +579,8 @@ class PatientPortalController extends Controller
         });
 
         return Inertia::render('patients/schedule', [
-            'patient' => $patient,
+            'patient' => $this->patientPayload($patient),
+            'activePregnancy' => $this->pregnancyPayload($activePregnancy),
             'appointments' => $appointments,
             'today' => $today->toDateString(),
             'nextAppointment' => $next,

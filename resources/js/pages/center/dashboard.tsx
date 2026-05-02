@@ -60,13 +60,25 @@ type CenterAppt = {
   has_record?: boolean | null;
   can_reschedule?: boolean;
   patient_name?: string | null;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  suffix?: string | null;
   patient_id?: number | string | null;
   barangay?: string | null;
 };
 
 type OwnershipRequest = {
   id: number;
-  patient: { id: number; full_name?: string | null; barangay?: string | null };
+  patient: {
+    id: number;
+    full_name?: string | null;
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    suffix?: string | null;
+    barangay?: string | null;
+  };
   requester: { id: number; name?: string | null; barangay?: string | null };
   message?: string | null;
   when?: string | null;
@@ -203,6 +215,89 @@ export default function CenterDashboard() {
     if (!r) return "User";
     return r.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }, []);
+
+  /** Patient display name: SURNAME, GIVEN NAME M., SUFFIX. */
+  function formatFormalPatientName(parts: {
+    id?: number | string | null;
+    full_name?: string | null;
+    patient_name?: string | null;
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    suffix?: string | null;
+  }, fallback = "Unnamed patient"): string {
+    const clean = (v?: string | null) => String(v ?? "").replace(/\s+/g, " ").trim();
+    const suffixes = new Set(["JR", "JR.", "SR", "SR.", "II", "III", "IV", "V"]);
+
+    const first = clean(parts.first_name);
+    const middle = clean(parts.middle_name);
+    const last = clean(parts.last_name);
+    const suffix = clean(parts.suffix);
+
+    if (first || middle || last || suffix) {
+      const middleInitial = middle ? `${middle.charAt(0).toUpperCase()}.` : "";
+      const givenBlock = [first, middleInitial].filter(Boolean).join(" ");
+      return [last || fallback, givenBlock, suffix].filter(Boolean).join(", ");
+    }
+
+    const text = clean(parts.full_name) || clean(parts.patient_name);
+    if (!text) return parts.id != null ? `Patient #${parts.id}` : fallback;
+
+    if (text.includes(",")) {
+      const [surnamePart, ...restParts] = text.split(",");
+      const surname = surnamePart.trim();
+      const restText = restParts.join(",").trim();
+      if (!surname || !restText) return text;
+
+      const rest = restText.split(" ").filter(Boolean);
+      let detectedSuffix = "";
+      const lastRestPart = rest[rest.length - 1]?.toUpperCase().replace(/\.$/, "");
+      if (lastRestPart && (suffixes.has(lastRestPart) || suffixes.has(`${lastRestPart}.`))) {
+        detectedSuffix = rest.pop() ?? "";
+      }
+
+      const given = rest.shift() ?? "";
+      const middleInitial = rest.length > 0 ? `${rest[0].charAt(0).toUpperCase()}.` : "";
+      return [surname, [given, middleInitial].filter(Boolean).join(" "), detectedSuffix]
+        .filter(Boolean)
+        .join(", ");
+    }
+
+    const nameParts = text.split(" ").filter(Boolean);
+    if (nameParts.length <= 1) return text;
+
+    let detectedSuffix = "";
+    const lastPart = nameParts[nameParts.length - 1].toUpperCase().replace(/\.$/, "");
+    if (suffixes.has(lastPart) || suffixes.has(`${lastPart}.`)) {
+      detectedSuffix = nameParts.pop() ?? "";
+    }
+
+    if (nameParts.length <= 1) {
+      return detectedSuffix ? `${nameParts[0]}, ${detectedSuffix}` : nameParts[0];
+    }
+
+    const given = nameParts.shift() ?? "";
+    const surname = nameParts.pop() ?? "";
+    const middleInitial = nameParts.length > 0 ? `${nameParts[0].charAt(0).toUpperCase()}.` : "";
+
+    return [surname, [given, middleInitial].filter(Boolean).join(" "), detectedSuffix]
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  function appointmentPatientName(a: Pick<CenterAppt, "id" | "patient_id" | "patient_name" | "first_name" | "middle_name" | "last_name" | "suffix">): string {
+    return formatFormalPatientName(
+      {
+        id: a.patient_id ?? a.id,
+        patient_name: a.patient_name,
+        first_name: a.first_name,
+        middle_name: a.middle_name,
+        last_name: a.last_name,
+        suffix: a.suffix,
+      },
+      "Unknown patient"
+    );
+  }
 
   /** Announcements */
   const announcements = React.useMemo(
@@ -759,7 +854,7 @@ export default function CenterDashboard() {
       )}
 
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex h-20 w-full max-w-[1800px] items-center justify-between px-4 sm:px-6 lg:px-8 2xl:px-10">
+        <div className="mx-auto flex h-20 w-full max-w-none items-center justify-between px-3 sm:px-5 lg:px-8 2xl:px-10">
           <Link href="/dashboard" className="group flex min-w-0 items-center gap-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600">
             <img src={Logo} alt="OneHealth" className="h-11 w-11 rounded-xl select-none" draggable={false} />
             <div className="min-w-0 leading-tight">
@@ -818,7 +913,7 @@ export default function CenterDashboard() {
 
         {SEARCH_PLACEMENT === "top" && (
           <div className="border-t border-slate-200 bg-white/70 backdrop-blur-sm">
-            <div className="mx-auto w-full max-w-[1800px] px-4 py-4 sm:px-6 lg:px-8 2xl:px-10">
+            <div className="mx-auto w-full max-w-none px-4 py-4 sm:px-6 lg:px-8 2xl:px-10">
               <form onSubmit={onSearch} className="relative w-full">
                 <label className="sr-only" htmlFor="global-search-top">
                   Search patients or records
@@ -846,8 +941,8 @@ export default function CenterDashboard() {
       </header>
 
       <main className="relative z-10">
-        <div className="mx-auto w-full max-w-[1800px] px-4 pb-10 sm:px-6 lg:px-8 2xl:px-10">
-          <section className="pt-6">
+        <div className="mx-auto w-full max-w-none px-3 pb-10 sm:px-5 lg:px-8 2xl:px-10">
+          <section className="pt-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
                 <h1 className="text-[22px] font-semibold tracking-tight text-[#203D7A] sm:text-[24px] md:text-[28px]">
@@ -860,7 +955,7 @@ export default function CenterDashboard() {
               </div>
 
               {SEARCH_PLACEMENT === "inline" && (
-                <form onSubmit={onSearch} className="relative w-full xl:max-w-[640px]">
+                <form onSubmit={onSearch} className="relative w-full xl:max-w-[860px] 2xl:max-w-[920px]">
                   <label className="sr-only" htmlFor="global-search-inline">
                     Search patients or records
                   </label>
@@ -884,7 +979,7 @@ export default function CenterDashboard() {
             </div>
           </section>
 
-          <section className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <CardLink href="/center/records" title="Records" subtitle="Open the records index" icon={<IconRecords className="h-5 w-5 text-[#0F8A99]" />} />
             <CardLink href={REPORTS_PATH} title="Reports" subtitle="View health center summary" icon={<IconReports className="h-5 w-5 text-[#0F8A99]" />} />
             {role === "admin" && (
@@ -892,7 +987,7 @@ export default function CenterDashboard() {
             )}
           </section>
 
-          <section className="mt-6 md:mt-10">
+          <section className="mt-6 md:mt-8">
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.06)]">
               <div className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-5 lg:px-6">
                 <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
@@ -962,7 +1057,7 @@ export default function CenterDashboard() {
                 </div>
               )}
 
-              <div className="grid items-start gap-5 p-3 sm:p-4 lg:p-5 xl:grid-cols-[minmax(0,1.9fr)_minmax(360px,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(420px,1fr)]">
+              <div className="grid items-start gap-4 p-3 sm:p-4 lg:p-5 xl:grid-cols-[minmax(0,2.15fr)_minmax(360px,0.85fr)] 2xl:grid-cols-[minmax(0,2.55fr)_minmax(420px,0.9fr)]">
                 <div ref={calendarColRef} className="min-w-0">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2.5 sm:p-3 lg:p-4">
                     <div className="flex flex-col gap-3">
@@ -1080,7 +1175,7 @@ export default function CenterDashboard() {
                                 type="button"
                                 onClick={handleClick}
                                 className={[
-                                  "calendar-cell-compact relative min-h-[62px] rounded-xl border px-1.5 py-1.5 text-left shadow-sm transition sm:min-h-[72px] sm:rounded-2xl sm:px-2 sm:py-2 lg:min-h-[84px]",
+                                  "calendar-cell-compact relative min-h-[62px] rounded-xl border px-1.5 py-1.5 text-left shadow-sm transition sm:min-h-[72px] sm:rounded-2xl sm:px-2 sm:py-2 lg:min-h-[92px] 2xl:min-h-[102px]",
                                   inMonth ? "bg-white hover:border-[#0F8A99]/60 hover:shadow-md" : "bg-slate-50 text-slate-400",
                                   any ? "border-[#0F8A99]/25" : "border-slate-200",
                                   isSelected ? "ring-2 ring-[#0F8A99] border-[#0F8A99]/40" : "",
@@ -1216,7 +1311,7 @@ export default function CenterDashboard() {
                                           }}
                                           className="font-semibold text-slate-800 hover:underline underline-offset-2"
                                         >
-                                          {a.patient_name || "Unknown patient"}
+                                          {appointmentPatientName(a)}
                                         </button>
 
                                         {a.barangay && <div className="text-[11px] text-slate-400">{a.barangay}</div>}
@@ -1387,7 +1482,7 @@ export default function CenterDashboard() {
                                         }}
                                         className="font-semibold text-slate-800 hover:underline underline-offset-2"
                                       >
-                                        {a.patient_name || "Unknown patient"}
+                                        {appointmentPatientName(a)}
                                       </button>
 
                                       {a.barangay && <div className="text-[11px] text-slate-400">{a.barangay}</div>}
@@ -1470,7 +1565,7 @@ export default function CenterDashboard() {
             </div>
           </section>
 
-          <section className="mt-8 xl:mt-10">
+          <section className="mt-6 xl:mt-8">
             <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-2xl border-b border-slate-200 bg-white/95 px-4 py-3.5 backdrop-blur sm:px-5">
                 <div>
@@ -1484,7 +1579,7 @@ export default function CenterDashboard() {
                 )}
               </div>
 
-              <div className="scroll-thin relative max-h-[520px] overflow-y-auto overscroll-contain px-4 py-3 sm:px-5 sm:py-4">
+              <div className="scroll-thin relative max-h-[620px] overflow-y-auto overscroll-contain px-4 py-3 sm:px-5 sm:py-4">
                 {activities.length ? (
                   <div className="relative">
                     <ul className="space-y-2.5 sm:space-y-3">
@@ -1598,7 +1693,7 @@ export default function CenterDashboard() {
                     {ownershipReqs.map((r) => (
                       <li key={r.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                         <div className="break-words text-[13px] font-semibold text-slate-900">
-                          {r.patient.full_name ?? `Patient #${r.patient.id}`}
+                          {formatFormalPatientName(r.patient, `Patient #${r.patient.id}`)}
                         </div>
                         <div className="mt-0.5 text-[12px] text-slate-600">
                           Requested by <span className="font-medium">{r.requester.name ?? `User #${r.requester.id}`}</span>
@@ -1700,7 +1795,7 @@ export default function CenterDashboard() {
           </p>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="font-semibold text-slate-900">{ownershipConfirmReq?.patient?.full_name ?? "Patient"}</div>
+            <div className="font-semibold text-slate-900">{ownershipConfirmReq?.patient ? formatFormalPatientName(ownershipConfirmReq.patient, "Patient") : "Patient"}</div>
             <div className="text-xs text-slate-600">Request by: {ownershipConfirmReq?.requester?.name ?? "Health Worker"}</div>
           </div>
 
@@ -1783,7 +1878,7 @@ export default function CenterDashboard() {
                       onClick={() => openPatientRecordFromAppt(ev)}
                       className="font-semibold text-slate-800 hover:underline underline-offset-2"
                     >
-                      {ev.patient_name ?? "Unnamed patient"}
+                      {appointmentPatientName(ev)}
                     </button>
                     <span className="text-[11px] text-slate-500">
                       {formatYMDLong(ev.date, { month: "short", day: "numeric", year: "numeric" })}
@@ -1826,7 +1921,7 @@ export default function CenterDashboard() {
                       onClick={() => openPatientRecordFromAppt(ev)}
                       className="font-semibold text-slate-800 hover:underline underline-offset-2"
                     >
-                      {ev.patient_name ?? "Unnamed patient"}
+                      {appointmentPatientName(ev)}
                     </button>
                     <span className="text-[11px] text-slate-500">
                       {formatYMDLong(ev.date, { month: "short", day: "numeric", year: "numeric" })}
@@ -1901,7 +1996,7 @@ export default function CenterDashboard() {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <button type="button" onClick={() => openPatientRecordFromAppt(a)} className="font-semibold text-slate-800 hover:underline underline-offset-2">
-                          {a.patient_name ?? "Unnamed patient"}
+                          {appointmentPatientName(a)}
                         </button>
                         {a.barangay && <div className="text-[11px] text-slate-400">{a.barangay}</div>}
                         <div className="mt-0.5 text-[11px] text-slate-600">{getApptText(a)}</div>

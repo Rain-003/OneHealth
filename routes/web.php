@@ -18,6 +18,7 @@ use App\Http\Controllers\Prenatal\ItrController;
 use App\Http\Controllers\Prenatal\HbmHistoryController;
 use App\Http\Controllers\Prenatal\HbmCurrentController;
 use App\Http\Controllers\Prenatal\HbmAfterController;
+use App\Http\Controllers\Prenatal\PregnancyController;
 
 use App\Http\Controllers\PatientPortalController;
 use App\Http\Controllers\Tools\BackfillController;
@@ -66,7 +67,7 @@ Route::prefix('patient')->name('patient.')->group(function () {
         Route::get('/login', [PatientsController::class, 'create'])->name('login');
         Route::post('/login', [PatientsController::class, 'store'])->name('login.store');
 
-        Route::get('/access-with-info', fn () => Inertia::render('patients/access-with-info'))
+        Route::get('/access-with-info', fn() => Inertia::render('patients/access-with-info'))
             ->name('access.info');
 
         Route::post('/access-with-info', [PatientsController::class, 'loginWithInfo'])
@@ -80,7 +81,7 @@ Route::prefix('patient')->name('patient.')->group(function () {
         Route::get('/dashboard', [PatientPortalController::class, 'dashboard'])->name('dashboard');
         Route::get('/schedule', [PatientPortalController::class, 'schedule'])->name('schedule');
 
-        Route::get('/inbox', fn () => Inertia::render('404handlerpage'))->name('inbox');
+        Route::get('/inbox', fn() => Inertia::render('404handlerpage'))->name('inbox');
 
         Route::get('/immunization-card', [ImmunizationController::class, 'card'])->name('immunization.card');
         Route::get('/prenatal-card', [PrenatalController::class, 'card'])->name('prenatal.card');
@@ -143,15 +144,15 @@ Route::middleware('auth')->group(function () {
                 $props = is_array($a->properties) ? $a->properties : [];
 
                 return [
-                    'id'          => $a->id,
-                    'type'        => $a->type,
+                    'id' => $a->id,
+                    'type' => $a->type,
                     'description' => $a->description,
-                    'patient'     => $a->patient?->full_name,
-                    'by'          => $a->user?->name,
-                    'barangay'    => $a->patient?->barangay ?? $a->user?->barangay,
-                    'when'        => optional($a->created_at)->diffForHumans(),
-                    'at'          => optional($a->created_at)->toIso8601String(),
-                    'details'     => $props['rows_pretty'] ?? ($props['summary'] ?? null),
+                    'patient' => $a->patient?->full_name,
+                    'by' => $a->user?->name,
+                    'barangay' => $a->patient?->barangay ?? $a->user?->barangay,
+                    'when' => optional($a->created_at)->diffForHumans(),
+                    'at' => optional($a->created_at)->toIso8601String(),
+                    'details' => $props['rows_pretty'] ?? ($props['summary'] ?? null),
                 ];
             });
 
@@ -286,6 +287,18 @@ Route::middleware('auth')->group(function () {
     Route::get('/center/patients/{patient}/prenatal', [PrenatalController::class, 'show'])
         ->whereNumber('patient')
         ->name('center.prenatal.show');
+
+    Route::post('/center/patients/{patient}/prenatal/pregnancies', [PregnancyController::class, 'store'])
+        ->whereNumber('patient')
+        ->name('center.prenatal.pregnancies.store');
+
+    Route::post('/center/patients/{patient}/prenatal/pregnancies/{pregnancy}/complete', [PregnancyController::class, 'complete'])
+        ->whereNumber('patient')
+        ->whereNumber('pregnancy')
+        ->name('center.prenatal.pregnancies.complete');
+
+    Route::post('/center/patients/{patient}/prenatal/pregnancies/{pregnancy}/reopen', [PregnancyController::class, 'reopen'])
+        ->name('center.prenatal.pregnancies.reopen');
 
     Route::post('/center/patients/{patient}/prenatal/itr-details', [ItrController::class, 'save'])
         ->whereNumber('patient')

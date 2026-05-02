@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Prenatal;
 
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\PatientRecordsController;
+use App\Http\Controllers\Prenatal\Concerns\ResolvesPregnancy;
 use App\Models\PatientsModel;
 use App\Models\PrenatalTopModel;
 use App\Models\PrenatalPlan;
@@ -21,14 +22,25 @@ use Illuminate\Support\Str;
 
 class ItrController extends Controller
 {
+    use ResolvesPregnancy;
+
     /* ───────────────────────────── Auth helpers ───────────────────────────── */
 
     private function ensureCanEdit(Request $request, PatientsModel $patient): void
     {
         $user = $request->user();
-        if (!$user) abort(403);
+        if (!$user)
+            abort(403);
 
-        if ($user->role !== 'admin' && (int) $patient->owner_id !== (int) $user->id) {
+        $sameAssignedBarangay =
+            trim(mb_strtolower((string) $patient->assigned_barangay)) !== '' &&
+            trim(mb_strtolower((string) $patient->assigned_barangay)) === trim(mb_strtolower((string) $user->barangay));
+
+        if (
+            $user->role !== 'admin' &&
+            (int) $patient->owner_id !== (int) $user->id &&
+            !$sameAssignedBarangay
+        ) {
             abort(403, 'View only.');
         }
     }
@@ -40,20 +52,72 @@ class ItrController extends Controller
     private function reactivateIfTransferred(PatientsModel $patient, string $source): void
     {
         $cur = strtolower((string) ($patient->status ?? ''));
-        if ($cur !== 'transferred') return;
+        if ($cur !== 'transferred')
+            return;
 
         $patient->status = 'active';
         $patient->save();
 
         Activity::record('patient.reactivated', [
-            'patient_id'  => $patient->id,
+            'patient_id' => $patient->id,
             'description' => 'Patient status set back to active after saving a record.',
-            'properties'  => [
-                'from'   => 'transferred',
-                'to'     => 'active',
+            'properties' => [
+                'from' => 'transferred',
+                'to' => 'active',
                 'source' => $source,
             ],
         ]);
+    }
+
+    /**
+     * Pregnancy-safe helpers. They check if pregnancy_id exists first so the file
+     * is safer while your migrations/controllers are being updated gradually.
+     */
+    private function withPregnancyLookup(string $modelClass, PatientsModel $patient, $pregnancy): array
+    {
+        $model = new $modelClass();
+        $lookup = ['patient_id' => $patient->id];
+
+        if (Schema::hasColumn($model->getTable(), 'pregnancy_id')) {
+            $lookup['pregnancy_id'] = $pregnancy->id;
+        }
+
+        return $lookup;
+    }
+
+    private function scopePregnancy($query, string $modelClass, $pregnancy)
+    {
+        $model = new $modelClass();
+
+        if (Schema::hasColumn($model->getTable(), 'pregnancy_id')) {
+            $query->where('pregnancy_id', $pregnancy->id);
+        }
+
+        return $query;
+    }
+
+    private function attachPregnancy($model, $pregnancy): void
+    {
+        if (Schema::hasColumn($model->getTable(), 'pregnancy_id')) {
+            $model->pregnancy_id = $pregnancy->id;
+        }
+    }
+
+    private function syncPregnancyDates($pregnancy, array $payload): void
+    {
+        $changes = [];
+
+        $lmp = $this->normalizeYmd($payload['lmp'] ?? ($payload['lmp_date'] ?? null));
+        $edd = $this->normalizeYmd($payload['edc'] ?? ($payload['edc_date'] ?? ($payload['edd'] ?? ($payload['edd_date'] ?? null))));
+
+        if ($lmp)
+            $changes['lmp'] = $lmp;
+        if ($edd)
+            $changes['edd'] = $edd;
+
+        if (!empty($changes)) {
+            $pregnancy->forceFill($changes)->save();
+        }
     }
 
     /* ───────────────────── Signature storage helpers ───────────────────── */
@@ -73,7 +137,8 @@ class ItrController extends Controller
      */
     private function normalizeStoredPath(?string $path): ?string
     {
-        if (!$path) return null;
+        if (!$path)
+            return null;
 
         $path = str_replace('\\', '/', $path);
         $path = preg_replace('#^/?storage/#', '', $path);
@@ -88,14 +153,15 @@ class ItrController extends Controller
     private function deleteSignatureFile(?string $path): void
     {
         $path = $this->normalizeStoredPath($path);
-        if (!$path) return;
+        if (!$path)
+            return;
 
         try {
             Storage::disk($this->signatureDisk())->delete($path);
         } catch (\Throwable $e) {
             Log::warning('Failed deleting prenatal signature file', [
                 'path' => $path,
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
             ]);
         }
     }
@@ -138,7 +204,8 @@ class ItrController extends Controller
         }
 
         $ext = strtolower($matches[1] ?? 'png');
-        if ($ext === 'jpeg') $ext = 'jpg';
+        if ($ext === 'jpeg')
+            $ext = 'jpg';
         if (!in_array($ext, ['png', 'jpg', 'webp'], true)) {
             $ext = 'png';
         }
@@ -154,7 +221,8 @@ class ItrController extends Controller
 
     private function normalizeYmd($value): ?string
     {
-        if ($value === null || $value === '') return null;
+        if ($value === null || $value === '')
+            return null;
         try {
             return Carbon::parse($value)->format('Y-m-d');
         } catch (\Throwable $e) {
@@ -164,7 +232,8 @@ class ItrController extends Controller
 
     private function daysBetweenYmd(?string $from, ?string $to): ?int
     {
-        if (!$from || !$to) return null;
+        if (!$from || !$to)
+            return null;
 
         try {
             $a = Carbon::createFromFormat('Y-m-d', $from)->startOfDay();
@@ -177,26 +246,40 @@ class ItrController extends Controller
 
     private function trimesterFromAogDays(?int $aogDays): ?string
     {
-        if ($aogDays === null || $aogDays < 0) return null;
+        if ($aogDays === null || $aogDays < 0)
+            return null;
 
-        if ($aogDays <= 97) return '1st';
-        if ($aogDays <= 181) return '2nd';
+        if ($aogDays <= 97)
+            return '1st';
+        if ($aogDays <= 181)
+            return '2nd';
         return '3rd';
     }
 
     private function resolvePatientLmpDate(PatientsModel $patient): ?string
     {
         try {
-            $top = PrenatalTopModel::where('patient_id', $patient->id)->first();
+            $pregnancy = $this->activePregnancyFor($patient);
+
+            $topQuery = PrenatalTopModel::where('patient_id', $patient->id);
+            $this->scopePregnancy($topQuery, PrenatalTopModel::class, $pregnancy);
+            $top = $topQuery->first();
+
             $topLmp = $this->normalizeYmd($top?->lmp);
-            if ($topLmp) return $topLmp;
+            if ($topLmp)
+                return $topLmp;
+
+            $pregnancyLmp = $this->normalizeYmd($pregnancy->lmp);
+            if ($pregnancyLmp)
+                return $pregnancyLmp;
         } catch (\Throwable $e) {
             // ignore
         }
 
         $snap = (array) ($patient->prenatal_itr ?? []);
         $snapLmp = $this->normalizeYmd($snap['lmp'] ?? ($snap['lmp_date'] ?? null));
-        if ($snapLmp) return $snapLmp;
+        if ($snapLmp)
+            return $snapLmp;
 
         return null;
     }
@@ -206,9 +289,13 @@ class ItrController extends Controller
      */
     private function recomputeVisitAogChain(PatientsModel $patient): void
     {
+        $pregnancy = $this->activePregnancyFor($patient);
         $lmp = $this->resolvePatientLmpDate($patient);
 
-        $visits = PrenatalVisit::where('patient_id', $patient->id)
+        $visitsQuery = PrenatalVisit::where('patient_id', $patient->id);
+        $this->scopePregnancy($visitsQuery, PrenatalVisit::class, $pregnancy);
+
+        $visits = $visitsQuery
             ->orderBy('visit_date')
             ->orderBy('id')
             ->get();
@@ -269,13 +356,19 @@ class ItrController extends Controller
      */
     private function refreshPatientPrenatalVisitsSnapshot(PatientsModel $patient): void
     {
-        if (!Schema::hasColumn($patient->getTable(), 'prenatal_visits')) return;
+        if (!Schema::hasColumn($patient->getTable(), 'prenatal_visits'))
+            return;
 
-        $rows = PrenatalVisit::where('patient_id', $patient->id)
+        $pregnancy = $this->activePregnancyFor($patient);
+
+        $rowsQuery = PrenatalVisit::where('patient_id', $patient->id);
+        $this->scopePregnancy($rowsQuery, PrenatalVisit::class, $pregnancy);
+
+        $rows = $rowsQuery
             ->orderBy('visit_date')
             ->orderBy('id')
             ->get()
-            ->map(fn ($r) => $r->toArray())
+            ->map(fn($r) => $r->toArray())
             ->values()
             ->all();
 
@@ -290,18 +383,31 @@ class ItrController extends Controller
     {
         if (Schema::hasColumn($patient->getTable(), 'prenatal_hbm_current')) {
             $patient->prenatal_hbm_current = [
-                'rows'   => [],
+                'rows' => [],
                 'visits' => [],
             ];
             $patient->save();
         }
 
-        CurrentPregnancy::where('patient_id', $patient->id)->delete();
-        Appointment::where('patient_id', $patient->id)
-            ->where('source_type', 'prenatal_current_visit')
-            ->delete();
+        $pregnancy = $this->activePregnancyFor($patient);
 
-        $visits = PrenatalVisit::where('patient_id', $patient->id)
+        $currentQuery = CurrentPregnancy::where('patient_id', $patient->id);
+        $this->scopePregnancy($currentQuery, CurrentPregnancy::class, $pregnancy);
+        $currentIds = $currentQuery->pluck('id')->map(fn($id) => (int) $id)->all();
+
+        if (!empty($currentIds)) {
+            Appointment::where('patient_id', $patient->id)
+                ->where('source_type', 'prenatal_current_visit')
+                ->whereIn('source_id', $currentIds)
+                ->delete();
+        }
+
+        $currentQuery->delete();
+
+        $visitsQuery = PrenatalVisit::where('patient_id', $patient->id);
+        $this->scopePregnancy($visitsQuery, PrenatalVisit::class, $pregnancy);
+
+        $visits = $visitsQuery
             ->orderBy('visit_date')
             ->orderBy('id')
             ->get();
@@ -317,6 +423,7 @@ class ItrController extends Controller
     public function save(Request $request, PatientsModel $patient)
     {
         $this->ensureCanEdit($request, $patient);
+        $pregnancy = $this->activePregnancyFor($patient);
 
         $payload = $request->input('itr');
         if (!is_array($payload)) {
@@ -326,7 +433,7 @@ class ItrController extends Controller
         $payload['lmp'] = $payload['lmp'] ?? ($payload['lmp_date'] ?? null);
         $payload['edc'] = $payload['edc'] ?? ($payload['edc_date'] ?? ($payload['edd'] ?? $payload['edd_date'] ?? null));
 
-        foreach (['risk_a_date','risk_b_date','risk_c_date','risk_d_date','risk_e_date'] as $rk) {
+        foreach (['risk_a_date', 'risk_b_date', 'risk_c_date', 'risk_d_date', 'risk_e_date'] as $rk) {
             if (array_key_exists($rk, $payload) && $payload[$rk] !== null && $payload[$rk] !== '') {
                 try {
                     $payload[$rk] = Carbon::parse($payload[$rk])->format('Y-m-d');
@@ -336,7 +443,7 @@ class ItrController extends Controller
             }
         }
 
-        foreach (['risk_a_flag','risk_b_flag','risk_c_flag','risk_d_flag','risk_e_flag'] as $bk) {
+        foreach (['risk_a_flag', 'risk_b_flag', 'risk_c_flag', 'risk_d_flag', 'risk_e_flag'] as $bk) {
             if (array_key_exists($bk, $payload)) {
                 $payload[$bk] = filter_var($payload[$bk], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
             }
@@ -345,7 +452,8 @@ class ItrController extends Controller
         if (!empty($payload['next_visit_date'])) {
             try {
                 $payload['next_visit_date'] = Carbon::parse($payload['next_visit_date'])->format('Y-m-d');
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+            }
         }
 
         $isDraft = ($request->input('mode') === 'draft') || $request->boolean('autosave');
@@ -364,27 +472,28 @@ class ItrController extends Controller
         }
 
         foreach ($payload as $k => $v) {
-            if ($v === '') $payload[$k] = null;
+            if ($v === '')
+                $payload[$k] = null;
         }
 
         $data = validator($payload, [
-            'lmp'       => ['nullable', 'date'],
-            'edc'       => ['nullable', 'date'],
-            'ob_g'      => ['nullable', 'integer'],
-            'ob_p'      => ['nullable', 'integer'],
-            'ob_gtpal'  => ['nullable', 'string', 'max:50'],
+            'lmp' => ['nullable', 'date'],
+            'edc' => ['nullable', 'date'],
+            'ob_g' => ['nullable', 'integer'],
+            'ob_p' => ['nullable', 'integer'],
+            'ob_gtpal' => ['nullable', 'string', 'max:50'],
 
-            'risk_a_date' => ['nullable','date'],
-            'risk_b_date' => ['nullable','date'],
-            'risk_c_date' => ['nullable','date'],
-            'risk_d_date' => ['nullable','date'],
-            'risk_e_date' => ['nullable','date'],
+            'risk_a_date' => ['nullable', 'date'],
+            'risk_b_date' => ['nullable', 'date'],
+            'risk_c_date' => ['nullable', 'date'],
+            'risk_d_date' => ['nullable', 'date'],
+            'risk_e_date' => ['nullable', 'date'],
 
-            'tt1_date'       => ['nullable', 'date'],
-            'tt2_date'       => ['nullable', 'date'],
-            'tt3_date'       => ['nullable', 'date'],
-            'tt4_date'       => ['nullable', 'date'],
-            'tt5_date'       => ['nullable', 'date'],
+            'tt1_date' => ['nullable', 'date'],
+            'tt2_date' => ['nullable', 'date'],
+            'tt3_date' => ['nullable', 'date'],
+            'tt4_date' => ['nullable', 'date'],
+            'tt5_date' => ['nullable', 'date'],
             'vitamin_a_date' => ['nullable', 'date'],
 
             'risk_a_flag' => ['nullable', 'boolean'],
@@ -393,11 +502,13 @@ class ItrController extends Controller
             'risk_d_flag' => ['nullable', 'boolean'],
             'risk_e_flag' => ['nullable', 'boolean'],
 
-            'next_visit_date' => ['nullable','date'],
+            'next_visit_date' => ['nullable', 'date'],
         ])->validate();
 
         try {
-            $top = PrenatalTopModel::firstOrNew(['patient_id' => $patient->id]);
+            $top = PrenatalTopModel::firstOrNew(
+                $this->withPregnancyLookup(PrenatalTopModel::class, $patient, $pregnancy)
+            );
 
             $allowed = [];
             foreach ($data as $k => $v) {
@@ -408,7 +519,9 @@ class ItrController extends Controller
 
             $top->forceFill($allowed);
             $top->patient_id = $patient->id;
+            $this->attachPregnancy($top, $pregnancy);
             $top->save();
+            $this->syncPregnancyDates($pregnancy, $payload);
 
             if (Schema::hasColumn($patient->getTable(), 'prenatal_itr')) {
                 $snap = (array) ($patient->prenatal_itr ?? []);
@@ -425,20 +538,20 @@ class ItrController extends Controller
             $this->syncAllItrVisitsToHbmCurrent($patient->fresh());
 
             Activity::record('prenatal.itr.updated', [
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'description' => 'Updated prenatal ITR',
-                'properties'  => ['keys' => array_keys($allowed)],
+                'properties' => ['keys' => array_keys($allowed)],
             ]);
 
             if (!empty($data['next_visit_date'])) {
                 Appointment::updateOrCreate(
                     [
-                        'patient_id'  => $patient->id,
+                        'patient_id' => $patient->id,
                         'source_type' => 'prenatal_itr',
-                        'source_id'   => 0,
+                        'source_id' => 0,
                     ],
                     [
-                        'date'  => $data['next_visit_date'],
+                        'date' => $data['next_visit_date'],
                         'title' => 'Prenatal follow-up',
                         'notes' => null,
                     ]
@@ -450,7 +563,7 @@ class ItrController extends Controller
             return response()->noContent();
         } catch (\Throwable $e) {
             Log::error('ITR save error', ['patient_id' => $patient->id, 'err' => $e->getMessage()]);
-            return response()->json(['message' => 'ITR save failed: '.$e->getMessage()], 500);
+            return response()->json(['message' => 'ITR save failed: ' . $e->getMessage()], 500);
         }
     }
 
@@ -458,35 +571,42 @@ class ItrController extends Controller
     public function saveTtVitA(Request $request, PatientsModel $patient)
     {
         $this->ensureCanEdit($request, $patient);
+        $pregnancy = $this->activePregnancyFor($patient);
 
         $payload = $request->input('tt_vita');
         if (!is_array($payload)) {
-            $payload = $request->only(['tt1_date','tt2_date','tt3_date','tt4_date','tt5_date','vitamin_a_date']);
-            if (empty($payload)) $payload = $request->except(['_token']);
+            $payload = $request->only(['tt1_date', 'tt2_date', 'tt3_date', 'tt4_date', 'tt5_date', 'vitamin_a_date']);
+            if (empty($payload))
+                $payload = $request->except(['_token']);
         }
 
         $clean = [];
-        foreach ($payload as $k => $v) $clean[$k] = ($v === '') ? null : $v;
+        foreach ($payload as $k => $v)
+            $clean[$k] = ($v === '') ? null : $v;
 
         $clean = validator($clean, [
-            'tt1_date'       => ['nullable', 'date'],
-            'tt2_date'       => ['nullable', 'date'],
-            'tt3_date'       => ['nullable', 'date'],
-            'tt4_date'       => ['nullable', 'date'],
-            'tt5_date'       => ['nullable', 'date'],
+            'tt1_date' => ['nullable', 'date'],
+            'tt2_date' => ['nullable', 'date'],
+            'tt3_date' => ['nullable', 'date'],
+            'tt4_date' => ['nullable', 'date'],
+            'tt5_date' => ['nullable', 'date'],
             'vitamin_a_date' => ['nullable', 'date'],
         ])->validate();
 
         try {
-            $top = PrenatalTopModel::firstOrNew(['patient_id' => $patient->id]);
+            $top = PrenatalTopModel::firstOrNew(
+                $this->withPregnancyLookup(PrenatalTopModel::class, $patient, $pregnancy)
+            );
 
             $allowed = [];
             foreach ($clean as $k => $v) {
-                if (Schema::hasColumn($top->getTable(), $k)) $allowed[$k] = $v;
+                if (Schema::hasColumn($top->getTable(), $k))
+                    $allowed[$k] = $v;
             }
 
             $top->forceFill($allowed);
             $top->patient_id = $patient->id;
+            $this->attachPregnancy($top, $pregnancy);
             $top->save();
 
             if (Schema::hasColumn($patient->getTable(), 'prenatal_itr')) {
@@ -496,7 +616,7 @@ class ItrController extends Controller
             }
 
             Activity::record('prenatal.tt_vita.updated', [
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'description' => 'Updated TT/Vitamin A dates',
             ]);
 
@@ -505,7 +625,7 @@ class ItrController extends Controller
             return response()->noContent();
         } catch (\Throwable $e) {
             Log::error('TT/VitA save error', ['patient_id' => $patient->id, 'err' => $e->getMessage()]);
-            return response()->json(['message' => 'TT/VitA save failed: '.$e->getMessage()], 500);
+            return response()->json(['message' => 'TT/VitA save failed: ' . $e->getMessage()], 500);
         }
     }
 
@@ -513,6 +633,7 @@ class ItrController extends Controller
     public function savePlan(Request $request, PatientsModel $patient)
     {
         $this->ensureCanEdit($request, $patient);
+        $pregnancy = $this->activePregnancyFor($patient);
 
         $plan = $request->input('plan');
         if (!is_array($plan)) {
@@ -526,38 +647,38 @@ class ItrController extends Controller
         }
 
         $validated = validator($plan, [
-            'plan_date'                      => ['nullable', 'date'],
-            'planned_facility'               => ['nullable', 'string', 'max:255'],
-            'attending_personnel'            => ['nullable', 'string', 'max:255'],
+            'plan_date' => ['nullable', 'date'],
+            'planned_facility' => ['nullable', 'string', 'max:255'],
+            'attending_personnel' => ['nullable', 'string', 'max:255'],
             'planned_facility_is_philhealth' => ['nullable', 'string', 'max:10'],
-            'distance_from_residence'        => ['nullable', 'string', 'max:100'],
-            'estimated_cost'                 => ['nullable', 'string', 'max:100'],
-            'mode_of_payment'                => ['nullable', 'string', 'max:100'],
-            'available_transport'            => ['nullable', 'string', 'max:100'],
-            'companion_name'                 => ['nullable', 'string', 'max:255'],
-            'companion_address'              => ['nullable', 'string', 'max:255'],
-            'companion_contact'              => ['nullable', 'string', 'max:255'],
-            'family_companion_name'          => ['nullable', 'string', 'max:255'],
-            'family_companion_relationship'  => ['nullable', 'string', 'max:255'],
-            'family_companion_address'       => ['nullable', 'string', 'max:255'],
-            'family_companion_contact'       => ['nullable', 'string', 'max:255'],
-            'caretaker_name'                 => ['nullable', 'string', 'max:255'],
-            'caretaker_relationship'         => ['nullable', 'string', 'max:255'],
-            'blood_type'                     => ['nullable', 'string', 'max:10'],
-            'blood_donor_1_name'             => ['nullable', 'string', 'max:255'],
-            'blood_donor_1_address'          => ['nullable', 'string', 'max:255'],
-            'blood_donor_2_name'             => ['nullable', 'string', 'max:255'],
-            'blood_donor_2_address'          => ['nullable', 'string', 'max:255'],
-            'emergency_contact_name'         => ['nullable', 'string', 'max:255'],
-            'emergency_contact_address'      => ['nullable', 'string', 'max:255'],
-            'emergency_contact_contact'      => ['nullable', 'string', 'max:255'],
-            'maternal_hospital_1_name'       => ['nullable', 'string', 'max:255'],
-            'maternal_hospital_1_address'    => ['nullable', 'string', 'max:255'],
-            'maternal_hospital_2_name'       => ['nullable', 'string', 'max:255'],
-            'maternal_hospital_2_address'    => ['nullable', 'string', 'max:255'],
-            'signature_name'                 => ['nullable', 'string', 'max:255'],
-            'signature_mode'                 => ['nullable', 'in:upload,draw'],
-            'signature_data'                 => ['nullable', 'string'],
+            'distance_from_residence' => ['nullable', 'string', 'max:100'],
+            'estimated_cost' => ['nullable', 'string', 'max:100'],
+            'mode_of_payment' => ['nullable', 'string', 'max:100'],
+            'available_transport' => ['nullable', 'string', 'max:100'],
+            'companion_name' => ['nullable', 'string', 'max:255'],
+            'companion_address' => ['nullable', 'string', 'max:255'],
+            'companion_contact' => ['nullable', 'string', 'max:255'],
+            'family_companion_name' => ['nullable', 'string', 'max:255'],
+            'family_companion_relationship' => ['nullable', 'string', 'max:255'],
+            'family_companion_address' => ['nullable', 'string', 'max:255'],
+            'family_companion_contact' => ['nullable', 'string', 'max:255'],
+            'caretaker_name' => ['nullable', 'string', 'max:255'],
+            'caretaker_relationship' => ['nullable', 'string', 'max:255'],
+            'blood_type' => ['nullable', 'string', 'max:10'],
+            'blood_donor_1_name' => ['nullable', 'string', 'max:255'],
+            'blood_donor_1_address' => ['nullable', 'string', 'max:255'],
+            'blood_donor_2_name' => ['nullable', 'string', 'max:255'],
+            'blood_donor_2_address' => ['nullable', 'string', 'max:255'],
+            'emergency_contact_name' => ['nullable', 'string', 'max:255'],
+            'emergency_contact_address' => ['nullable', 'string', 'max:255'],
+            'emergency_contact_contact' => ['nullable', 'string', 'max:255'],
+            'maternal_hospital_1_name' => ['nullable', 'string', 'max:255'],
+            'maternal_hospital_1_address' => ['nullable', 'string', 'max:255'],
+            'maternal_hospital_2_name' => ['nullable', 'string', 'max:255'],
+            'maternal_hospital_2_address' => ['nullable', 'string', 'max:255'],
+            'signature_name' => ['nullable', 'string', 'max:255'],
+            'signature_mode' => ['nullable', 'in:upload,draw'],
+            'signature_data' => ['nullable', 'string'],
         ])->validate();
 
         $request->validate([
@@ -567,17 +688,17 @@ class ItrController extends Controller
         try {
             $payload = $validated;
 
-            $payload['attending']           = $validated['attending_personnel'] ?? null;
-            $payload['distance']            = $validated['distance_from_residence'] ?? null;
-            $payload['payment_mode']        = $validated['mode_of_payment'] ?? null;
-            $payload['transport']           = $validated['available_transport'] ?? null;
-            $payload['companion_1_name']    = $validated['companion_name'] ?? null;
+            $payload['attending'] = $validated['attending_personnel'] ?? null;
+            $payload['distance'] = $validated['distance_from_residence'] ?? null;
+            $payload['payment_mode'] = $validated['mode_of_payment'] ?? null;
+            $payload['transport'] = $validated['available_transport'] ?? null;
+            $payload['companion_1_name'] = $validated['companion_name'] ?? null;
             $payload['companion_1_contact'] = $validated['companion_contact'] ?? null;
-            $payload['companion_2_name']    = $validated['family_companion_name'] ?? null;
+            $payload['companion_2_name'] = $validated['family_companion_name'] ?? null;
             $payload['companion_2_contact'] = $validated['family_companion_contact'] ?? null;
-            $payload['refer_to_name']       = $validated['emergency_contact_name'] ?? null;
-            $payload['refer_to_contact']    = $validated['emergency_contact_contact'] ?? null;
-            $payload['refer_to_address']    = $validated['emergency_contact_address'] ?? null;
+            $payload['refer_to_name'] = $validated['emergency_contact_name'] ?? null;
+            $payload['refer_to_contact'] = $validated['emergency_contact_contact'] ?? null;
+            $payload['refer_to_address'] = $validated['emergency_contact_address'] ?? null;
 
             $rawPhilhealth = $plan['planned_facility_is_philhealth'] ?? null;
             $isPhilhealth = in_array($rawPhilhealth, ['1', 1, true, 'yes', 'YES'], true);
@@ -592,7 +713,9 @@ class ItrController extends Controller
             }
             $payload['blood_donors'] = $bloodSummary ? implode('; ', $bloodSummary) : null;
 
-            $model = PrenatalPlan::firstOrNew(['patient_id' => $patient->id]);
+            $model = PrenatalPlan::firstOrNew(
+                $this->withPregnancyLookup(PrenatalPlan::class, $patient, $pregnancy)
+            );
             $oldSignaturePath = $this->normalizeStoredPath($model->signature_path ?? null);
 
             $payload['signature_path'] = $oldSignaturePath;
@@ -654,14 +777,15 @@ class ItrController extends Controller
 
             $model->fill($payload);
             $model->patient_id = $patient->id;
+            $this->attachPregnancy($model, $pregnancy);
             $model->save();
 
             Activity::record('prenatal.plan.updated', [
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'description' => 'Updated prenatal birth plan',
-                'properties'  => [
+                'properties' => [
                     'signature_mode' => $model->signature_mode,
-                    'has_signature'  => !empty($model->signature_path),
+                    'has_signature' => !empty($model->signature_path),
                 ],
             ]);
 
@@ -671,7 +795,7 @@ class ItrController extends Controller
         } catch (\Throwable $e) {
             Log::error('Birth plan save error', [
                 'patient_id' => $patient->id,
-                'err'        => $e->getMessage(),
+                'err' => $e->getMessage(),
             ]);
 
             return response()->json([
@@ -684,6 +808,7 @@ class ItrController extends Controller
     public function saveVisit(Request $request, PatientsModel $patient)
     {
         $this->ensureCanEdit($request, $patient);
+        $pregnancy = $this->activePregnancyFor($patient);
 
         $visit = $request->input('visit');
         if (!is_array($visit)) {
@@ -693,76 +818,86 @@ class ItrController extends Controller
         if (!empty($visit['visit_date'])) {
             try {
                 $visit['visit_date'] = Carbon::parse($visit['visit_date'])->format('Y-m-d');
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+            }
         }
 
         foreach ($visit as $k => $v) {
-            if ($v === '') $visit[$k] = null;
+            if ($v === '')
+                $visit[$k] = null;
         }
 
-        foreach (['health_education','birthplan_filled','lab_request','referred','advised'] as $b) {
+        foreach (['health_education', 'birthplan_filled', 'lab_request', 'referred', 'advised'] as $b) {
             if (array_key_exists($b, $visit)) {
                 $visit[$b] = filter_var($visit[$b], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
             }
         }
 
         $validated = validator(['visit' => $visit], [
-            'visit.id'               => ['sometimes','integer'],
-            'visit.visit_date'       => ['required','date_format:Y-m-d'],
-            'visit.aog_days'         => ['nullable','integer','min:0'],
-            'visit.bp'               => ['nullable','string','max:12'],
-            'visit.pr'               => ['nullable','string','max:12'],
-            'visit.rr'               => ['nullable','string','max:12'],
-            'visit.temp'             => ['nullable','string','max:12'],
-            'visit.wt'               => ['nullable','numeric'],
-            'visit.fh'               => ['nullable','numeric'],
-            'visit.fhr'              => ['nullable','integer'],
-            'visit.feso4_caps'       => ['nullable','integer','min:0'],
-            'visit.tt_given_ml'      => ['nullable','numeric'],
-            'visit.remarks'          => ['nullable','string','max:2000'],
-            'visit.trimester'        => ['nullable','in:1st,2nd,3rd'],
-            'visit.health_education' => ['nullable','boolean'],
-            'visit.birthplan_filled' => ['nullable','boolean'],
-            'visit.lab_request'      => ['nullable','boolean'],
-            'visit.referred'         => ['nullable','boolean'],
-            'visit.advised'          => ['nullable','boolean'],
+            'visit.id' => ['sometimes', 'integer'],
+            'visit.visit_date' => ['required', 'date_format:Y-m-d'],
+            'visit.aog_days' => ['nullable', 'integer', 'min:0'],
+            'visit.bp' => ['nullable', 'string', 'max:12'],
+            'visit.pr' => ['nullable', 'string', 'max:12'],
+            'visit.rr' => ['nullable', 'string', 'max:12'],
+            'visit.temp' => ['nullable', 'string', 'max:12'],
+            'visit.wt' => ['nullable', 'numeric'],
+            'visit.fh' => ['nullable', 'numeric'],
+            'visit.fhr' => ['nullable', 'integer'],
+            'visit.feso4_caps' => ['nullable', 'integer', 'min:0'],
+            'visit.tt_given_ml' => ['nullable', 'numeric'],
+            'visit.remarks' => ['nullable', 'string', 'max:2000'],
+            'visit.trimester' => ['nullable', 'in:1st,2nd,3rd'],
+            'visit.health_education' => ['nullable', 'boolean'],
+            'visit.birthplan_filled' => ['nullable', 'boolean'],
+            'visit.lab_request' => ['nullable', 'boolean'],
+            'visit.referred' => ['nullable', 'boolean'],
+            'visit.advised' => ['nullable', 'boolean'],
         ])->validate()['visit'];
 
         $payload = array_replace($visit, $validated);
 
         try {
-            $id = DB::transaction(function () use ($patient, $payload) {
+            $id = DB::transaction(function () use ($patient, $payload, $pregnancy) {
                 $model = null;
 
                 if (!empty($payload['id'])) {
-                    $model = PrenatalVisit::where('patient_id', $patient->id)
-                        ->where('id', $payload['id'])
-                        ->first();
+                    $modelQuery = PrenatalVisit::where('patient_id', $patient->id)
+                        ->where('id', $payload['id']);
+                    $this->scopePregnancy($modelQuery, PrenatalVisit::class, $pregnancy);
+                    $model = $modelQuery->first();
                 }
 
                 if (!$model) {
                     $model = new PrenatalVisit();
                     $model->patient_id = $patient->id;
+                    $this->attachPregnancy($model, $pregnancy);
                 }
 
                 $fillable = array_flip((new PrenatalVisit())->getFillable());
                 $filtered = [];
 
                 foreach ($payload as $k => $v) {
-                    if ($k === 'id') continue;
-                    if ($k === 'aog_days') continue;
-                    if ($k === 'trimester') continue;
-                    if (isset($fillable[$k])) $filtered[$k] = $v;
+                    if ($k === 'id')
+                        continue;
+                    if ($k === 'aog_days')
+                        continue;
+                    if ($k === 'trimester')
+                        continue;
+                    if (isset($fillable[$k]))
+                        $filtered[$k] = $v;
                 }
 
                 $model->fill($filtered);
 
                 if (Schema::hasColumn($model->getTable(), 'column_index')) {
                     if (!isset($payload['column_index']) || $payload['column_index'] === null) {
-                        $max = PrenatalVisit::where('patient_id', $patient->id)->max('column_index');
-                        $model->column_index = is_null($max) ? 0 : ((int)$max + 1);
+                        $maxQuery = PrenatalVisit::where('patient_id', $patient->id);
+                        $this->scopePregnancy($maxQuery, PrenatalVisit::class, $pregnancy);
+                        $max = $maxQuery->max('column_index');
+                        $model->column_index = is_null($max) ? 0 : ((int) $max + 1);
                     } else {
-                        $model->column_index = (int)$payload['column_index'];
+                        $model->column_index = (int) $payload['column_index'];
                     }
                 }
 
@@ -786,13 +921,16 @@ class ItrController extends Controller
                                 $token = substr($dash, 0, $len);
                             }
                         }
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
 
-                    if ($token === null) $token = Str::random(20);
+                    if ($token === null)
+                        $token = Str::random(20);
                     $model->token = $token;
                 }
 
                 $model->patient_id = $patient->id;
+                $this->attachPregnancy($model, $pregnancy);
                 $model->saveOrFail();
 
                 return (int) $model->id;
@@ -802,19 +940,20 @@ class ItrController extends Controller
             $this->recomputeVisitAogChain($freshPatient);
             $this->refreshPatientPrenatalVisitsSnapshot($freshPatient);
 
-            $row = PrenatalVisit::where('patient_id', $patient->id)
-                ->where('id', $id)
-                ->first();
+            $rowQuery = PrenatalVisit::where('patient_id', $patient->id)
+                ->where('id', $id);
+            $this->scopePregnancy($rowQuery, PrenatalVisit::class, $pregnancy);
+            $row = $rowQuery->first();
 
             if ($row) {
                 Appointment::updateOrCreate(
                     [
-                        'patient_id'  => $patient->id,
+                        'patient_id' => $patient->id,
                         'source_type' => 'prenatal_visit',
-                        'source_id'   => (int) $row->id,
+                        'source_id' => (int) $row->id,
                     ],
                     [
-                        'date'  => $row->visit_date,
+                        'date' => $row->visit_date,
                         'title' => 'Prenatal Visit',
                         'notes' => $row->remarks ?? null,
                     ]
@@ -829,65 +968,69 @@ class ItrController extends Controller
 
             $action = empty($payload['id']) ? 'created' : 'updated';
 
-            Activity::record('prenatal.visit.'.$action, [
-                'patient_id'  => $patient->id,
-                'description' => 'Prenatal visit '.$action.(empty($payload['visit_date']) ? '' : ' ('.$payload['visit_date'].')'),
-                'properties'  => ['id' => $id],
+            Activity::record('prenatal.visit.' . $action, [
+                'patient_id' => $patient->id,
+                'description' => 'Prenatal visit ' . $action . (empty($payload['visit_date']) ? '' : ' (' . $payload['visit_date'] . ')'),
+                'properties' => ['id' => $id],
             ]);
 
-            $row = PrenatalVisit::where('patient_id', $patient->id)
-                ->where('id', $id)
-                ->first();
+            $rowQuery = PrenatalVisit::where('patient_id', $patient->id)
+                ->where('id', $id);
+            $this->scopePregnancy($rowQuery, PrenatalVisit::class, $pregnancy);
+            $row = $rowQuery->first();
 
             return response()->json([
-                'id'  => $id,
+                'id' => $id,
                 'row' => $row?->toArray(),
             ], 200);
         } catch (\Illuminate\Database\QueryException $qe) {
             Log::error('Visit save DB error', [
                 'patient_id' => $patient->id,
-                'payload'    => $payload,
-                'sql_error'  => $qe->getMessage(),
+                'payload' => $payload,
+                'sql_error' => $qe->getMessage(),
             ]);
-            return response()->json(['message' => 'Visit save failed (DB): '.$qe->getMessage()], 500);
+            return response()->json(['message' => 'Visit save failed (DB): ' . $qe->getMessage()], 500);
         } catch (\Throwable $e) {
             Log::error('Visit save error', [
                 'patient_id' => $patient->id,
-                'payload'    => $payload,
-                'err'        => $e->getMessage(),
+                'payload' => $payload,
+                'err' => $e->getMessage(),
             ]);
-            return response()->json(['message' => 'Visit save failed: '.$e->getMessage()], 500);
+            return response()->json(['message' => 'Visit save failed: ' . $e->getMessage()], 500);
         }
     }
 
     public function deleteVisit(Request $request, PatientsModel $patient, $visit)
     {
         $this->ensureCanEdit($request, $patient);
+        $pregnancy = $this->activePregnancyFor($patient);
 
-        $model = PrenatalVisit::where('patient_id', $patient->id)
-            ->where('id', $visit)
-            ->first();
+        $modelQuery = PrenatalVisit::where('patient_id', $patient->id)
+            ->where('id', $visit);
+        $this->scopePregnancy($modelQuery, PrenatalVisit::class, $pregnancy);
+        $model = $modelQuery->first();
 
         if ($model) {
             $visitDate = $model->visit_date;
             $model->delete();
 
             Appointment::where([
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'source_type' => 'prenatal_visit',
-                'source_id'   => (int) $visit,
+                'source_id' => (int) $visit,
             ])->delete();
 
             if (!empty($visitDate)) {
-                $cp = CurrentPregnancy::where('patient_id', $patient->id)
-                    ->where('visit_date', $visitDate)
-                    ->first();
+                $cpQuery = CurrentPregnancy::where('patient_id', $patient->id)
+                    ->where('visit_date', $visitDate);
+                $this->scopePregnancy($cpQuery, CurrentPregnancy::class, $pregnancy);
+                $cp = $cpQuery->first();
 
                 if ($cp) {
                     Appointment::where([
-                        'patient_id'  => $patient->id,
+                        'patient_id' => $patient->id,
                         'source_type' => 'prenatal_current_visit',
-                        'source_id'   => (int) $cp->id,
+                        'source_id' => (int) $cp->id,
                     ])->delete();
 
                     $cp->delete();
@@ -898,14 +1041,14 @@ class ItrController extends Controller
 
                     $rows = (array) ($existing['rows'] ?? []);
                     foreach ($rows as $k => $r) {
-                        if ((string)($r['visit_date'] ?? '') === (string)$visitDate) {
+                        if ((string) ($r['visit_date'] ?? '') === (string) $visitDate) {
                             unset($rows[$k]);
                         }
                     }
                     $existing['rows'] = $rows;
 
                     $visits = array_values((array) ($existing['visits'] ?? []));
-                    $visits = array_values(array_filter($visits, fn ($r) => (string)($r['visit_date'] ?? '') !== (string)$visitDate));
+                    $visits = array_values(array_filter($visits, fn($r) => (string) ($r['visit_date'] ?? '') !== (string) $visitDate));
                     $existing['visits'] = $visits;
 
                     $patient->prenatal_hbm_current = $existing;
@@ -918,9 +1061,9 @@ class ItrController extends Controller
             $this->syncAllItrVisitsToHbmCurrent($patient->fresh());
 
             Activity::record('prenatal.visit.deleted', [
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'description' => 'Deleted prenatal visit',
-                'properties'  => ['id' => $visit],
+                'properties' => ['id' => $visit],
             ]);
 
             app(PatientRecordsController::class)->rebuildScheduleForPatient($patient);
@@ -934,8 +1077,16 @@ class ItrController extends Controller
      |========================================================================= */
     private function syncItrVisitToHbmCurrent(PatientsModel $patient, PrenatalVisit $visit): void
     {
-        if (empty($visit->visit_date)) return;
-        if (empty($visit->trimester)) return;
+        if (empty($visit->visit_date))
+            return;
+        if (empty($visit->trimester))
+            return;
+
+        if (Schema::hasColumn($visit->getTable(), 'pregnancy_id') && !empty($visit->pregnancy_id)) {
+            $pregnancy = $this->selectedOrActivePregnancyFor($patient, (int) $visit->pregnancy_id);
+        } else {
+            $pregnancy = $this->activePregnancyFor($patient);
+        }
 
         $monthIndex = match ((string) $visit->trimester) {
             '1st' => 1,
@@ -943,13 +1094,14 @@ class ItrController extends Controller
             '3rd' => 7,
             default => null,
         };
-        if (!$monthIndex) return;
+        if (!$monthIndex)
+            return;
 
         if (Schema::hasColumn($patient->getTable(), 'prenatal_hbm_current')) {
             $existing = (array) ($patient->prenatal_hbm_current ?? []);
 
             $rows = (array) ($existing['rows'] ?? []);
-            $key  = (string) $monthIndex;
+            $key = (string) $monthIndex;
             $prev = (array) ($rows[$key] ?? []);
 
             $gestWeeks = null;
@@ -958,15 +1110,15 @@ class ItrController extends Controller
             }
 
             $next = array_replace_recursive($prev, [
-                'month_index'        => $monthIndex,
-                'column_index'       => $monthIndex,
-                'visit_date'         => $visit->visit_date,
-                'gestational_weeks'  => $gestWeeks,
-                'bp'                 => $visit->bp,
-                'weight_kg'          => $visit->wt,
-                'fundal_height_cm'   => $visit->fh,
-                'fetal_heart_tone'   => $visit->fhr,
-                'remarks'            => $visit->remarks,
+                'month_index' => $monthIndex,
+                'column_index' => $monthIndex,
+                'visit_date' => $visit->visit_date,
+                'gestational_weeks' => $gestWeeks,
+                'bp' => $visit->bp,
+                'weight_kg' => $visit->wt,
+                'fundal_height_cm' => $visit->fh,
+                'fetal_heart_tone' => $visit->fhr,
+                'remarks' => $visit->remarks,
             ]);
 
             $rows[$key] = $next;
@@ -977,15 +1129,15 @@ class ItrController extends Controller
                 return (string) ($r['visit_date'] ?? '') !== (string) $visit->visit_date;
             }));
             $visits[] = [
-                'month_index'       => $monthIndex,
-                'column_index'      => $monthIndex,
-                'visit_date'        => $visit->visit_date,
+                'month_index' => $monthIndex,
+                'column_index' => $monthIndex,
+                'visit_date' => $visit->visit_date,
                 'gestational_weeks' => $gestWeeks,
-                'bp'                => $visit->bp,
-                'weight_kg'         => $visit->wt,
-                'fundal_height_cm'  => $visit->fh,
-                'fetal_heart_tone'  => $visit->fhr,
-                'remarks'           => $visit->remarks,
+                'bp' => $visit->bp,
+                'weight_kg' => $visit->wt,
+                'fundal_height_cm' => $visit->fh,
+                'fetal_heart_tone' => $visit->fhr,
+                'remarks' => $visit->remarks,
             ];
             $existing['visits'] = $visits;
 
@@ -993,32 +1145,39 @@ class ItrController extends Controller
             $patient->save();
         }
 
-        $cp = CurrentPregnancy::firstOrNew([
+        $cpLookup = [
             'patient_id' => $patient->id,
             'visit_date' => $visit->visit_date,
-        ]);
+        ];
+
+        if (Schema::hasColumn((new CurrentPregnancy())->getTable(), 'pregnancy_id')) {
+            $cpLookup['pregnancy_id'] = $pregnancy->id;
+        }
+
+        $cp = CurrentPregnancy::firstOrNew($cpLookup);
 
         $cp->fill([
-            'patient_id'       => $patient->id,
-            'visit_date'       => $visit->visit_date,
+            'patient_id' => $patient->id,
+            'visit_date' => $visit->visit_date,
             'age_of_pregnancy' => !is_null($visit->aog_days) ? (string) floor(((int) $visit->aog_days) / 7) : null,
-            'bp'               => $visit->bp,
-            'weight_kg'        => $visit->wt,
-            'fundic_height'    => $visit->fh,
+            'bp' => $visit->bp,
+            'weight_kg' => $visit->wt,
+            'fundic_height' => $visit->fh,
             'fetal_heart_tone' => $visit->fhr,
-            'remarks'          => $visit->remarks,
+            'remarks' => $visit->remarks,
         ]);
 
+        $this->attachPregnancy($cp, $pregnancy);
         $cp->save();
 
         Appointment::updateOrCreate(
             [
-                'patient_id'  => $patient->id,
+                'patient_id' => $patient->id,
                 'source_type' => 'prenatal_current_visit',
-                'source_id'   => (int) $cp->id,
+                'source_id' => (int) $cp->id,
             ],
             [
-                'date'  => $visit->visit_date,
+                'date' => $visit->visit_date,
                 'title' => 'Prenatal Checkup',
                 'notes' => $visit->remarks ?? null,
             ]

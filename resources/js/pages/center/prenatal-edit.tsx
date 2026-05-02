@@ -128,6 +128,23 @@ const IconHistory = (p: any) => (
     <path d="M12 7v6l4 2" />
   </svg>
 );
+const IconPlus = (p: any) => (
+  <svg viewBox="0 0 24 24" width="1em" height="1em" {...p} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+const IconFlag = (p: any) => (
+  <svg viewBox="0 0 24 24" width="1em" height="1em" {...p} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 22V4" />
+    <path d="M5 4h13l-2 4 2 4H5" />
+  </svg>
+);
+const IconUndo = (p: any) => (
+  <svg viewBox="0 0 24 24" width="1em" height="1em" {...p} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10a6 6 0 1 1 0 12h-4" />
+  </svg>
+);
 
 /* ───────── Types ───────── */
 export type VisitRow = {
@@ -173,10 +190,25 @@ type TransferHistoryRow = {
   by?: { id: number; name?: string | null; barangay?: string | null } | null;
 };
 
+type PregnancySummary = {
+  id: number;
+  patient_id?: number | string;
+  pregnancy_no?: number | string | null;
+  lmp?: string | null;
+  edd?: string | null;
+  status?: "ongoing" | "completed" | string | null;
+  outcome?: string | null;
+  completed_at?: string | null;
+};
+
 type PageProps = {
   patient: {
     id: number | string;
     full_name?: string;
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    suffix?: string | null;
     barangay?: string;
     address?: string;
     birthdate?: string | null;
@@ -210,6 +242,8 @@ type PageProps = {
   barangayTransferHistory?: TransferHistoryRow[];
   csrf?: string;
   flash?: { status?: string };
+  pregnancy?: PregnancySummary | null;
+  pregnancies?: PregnancySummary[];
 };
 
 /* ───────── helpers ───────── */
@@ -388,6 +422,30 @@ function splitWizardStyleFullName(fullName?: string | null) {
   };
 }
 
+function getPatientNameParts(patient: PageProps["patient"]) {
+  const hasSplitName = Boolean(
+    String(patient.first_name ?? "").trim() ||
+    String(patient.middle_name ?? "").trim() ||
+    String(patient.last_name ?? "").trim() ||
+    String(patient.suffix ?? "").trim()
+  );
+
+  if (hasSplitName) {
+    const rawSuffix = String(patient.suffix ?? "").trim().toUpperCase();
+    const knownSuffix = NAME_SUFFIX_OPTIONS.includes(rawSuffix as any);
+
+    return {
+      first_name: String(patient.first_name ?? ""),
+      middle_name: String(patient.middle_name ?? ""),
+      last_name: String(patient.last_name ?? ""),
+      suffix: knownSuffix ? rawSuffix : rawSuffix ? "OTHERS" : "",
+      suffix_other: knownSuffix ? "" : rawSuffix,
+    };
+  }
+
+  return splitWizardStyleFullName(patient.full_name);
+}
+
 function buildWizardStyleFullName(form: {
   first_name: string;
   middle_name: string;
@@ -456,7 +514,7 @@ function syncUrlForPrenatalVisits() {
 }
 
 const ui = {
-  shell: "mx-auto max-w-[1400px] px-3 sm:px-4 md:px-6 lg:px-8",
+  shell: "mx-auto w-full max-w-[1600px] px-3 sm:px-4 md:px-6 lg:px-8 xl:px-10",
 };
 
 const mobileField =
@@ -695,6 +753,251 @@ function HeaderChip({
       <span className="text-[#0F8A99]">{icon}</span>
       <span>{text}</span>
     </span>
+  );
+}
+
+function HeaderMetaPill({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={[
+        "min-w-0 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2",
+        "shadow-sm",
+        className,
+      ].join(" ")}
+    >
+      <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide text-slate-400 leading-none">
+        {label}
+      </div>
+      <div className="mt-1 min-w-0 truncate text-[11px] sm:text-xs font-semibold text-slate-700 leading-tight">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function PregnancyStatusBadge({ status }: { status?: string | null }) {
+  const normalized = String(status || "ongoing").toLowerCase();
+  const isCompleted = normalized === "completed";
+
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] font-bold uppercase tracking-wide",
+        isCompleted
+          ? "border-slate-200 bg-slate-100 text-slate-700"
+          : "border-teal-200 bg-teal-50 text-teal-800",
+      ].join(" ")}
+    >
+      {isCompleted ? "Completed" : "Ongoing"}
+    </span>
+  );
+}
+
+function PregnancyPanel({
+  pregnancy,
+  pregnancies,
+  canEdit,
+  onOpen,
+}: {
+  pregnancy?: PregnancySummary | null;
+  pregnancies: PregnancySummary[];
+  canEdit: boolean;
+  onOpen: () => void;
+}) {
+  const list = Array.isArray(pregnancies) ? pregnancies : [];
+
+  return (
+    <section className="mt-5 rounded-2xl border border-teal-100 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[#0F8A99]/10 text-[#0F8A99]">
+              <IconHeartPulse className="h-5 w-5" />
+            </span>
+
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pregnancy record</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                <span className="text-sm sm:text-base font-bold text-slate-900">
+                  Pregnancy #{pregnancy?.pregnancy_no ?? "—"}
+                </span>
+                <PregnancyStatusBadge status={pregnancy?.status} />
+                <span className="text-xs text-slate-500">
+                  {list.length || 0} total record{(list.length || 0) === 1 ? "" : "s"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#0F8A99] bg-[#0F8A99] px-4 text-sm font-semibold text-white shadow-sm hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+        >
+          <IconHistory className="h-4 w-4" />
+          Manage pregnancy records
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PregnancyManagerModal({
+  open,
+  pregnancy,
+  pregnancies,
+  canEdit,
+  onClose,
+  onNewPregnancy,
+  onCompletePregnancy,
+  onCancelCompletePregnancy,
+  onViewPregnancy,
+}: {
+  open: boolean;
+  pregnancy?: PregnancySummary | null;
+  pregnancies: PregnancySummary[];
+  canEdit: boolean;
+  onClose: () => void;
+  onNewPregnancy: () => void;
+  onCompletePregnancy: () => void;
+  onCancelCompletePregnancy: () => void;
+  onViewPregnancy: (id: number | string) => void;
+}) {
+  const list = Array.isArray(pregnancies) ? pregnancies : [];
+  const ongoing = String(pregnancy?.status || "").toLowerCase() === "ongoing";
+  const completed = String(pregnancy?.status || "").toLowerCase() === "completed";
+
+  return (
+    <ModalShell
+      open={open}
+      titleId="pregnancy-manager-title"
+      title="Pregnancy records"
+      subtitle="View pregnancy history, switch records, or manage the current pregnancy status."
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50 to-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Selected record</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-bold text-slate-900">
+                  Pregnancy #{pregnancy?.pregnancy_no ?? "—"}
+                </h3>
+                <PregnancyStatusBadge status={pregnancy?.status} />
+              </div>
+            </div>
+
+            {canEdit ? (
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+                {ongoing ? (
+                  <button
+                    type="button"
+                    onClick={onCompletePregnancy}
+                    disabled={!pregnancy?.id}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 text-xs font-bold text-amber-800 shadow-sm hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+                  >
+                    <IconFlag className="h-4 w-4" />
+                    Complete
+                  </button>
+                ) : null}
+
+                {completed ? (
+                  <button
+                    type="button"
+                    onClick={onCancelCompletePregnancy}
+                    disabled={!pregnancy?.id}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+                  >
+                    <IconUndo className="h-4 w-4" />
+                    Cancel completion
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={onNewPregnancy}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#0F8A99] bg-[#0F8A99] px-3 text-xs font-bold text-white shadow-sm hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+                >
+                  <IconPlus className="h-4 w-4" />
+                  New pregnancy
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">LMP</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">{fmtDate(pregnancy?.lmp ?? null)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">EDD</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">{fmtDate(pregnancy?.edd ?? null)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Completed at</div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">{fmtDate(pregnancy?.completed_at ?? null)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-slate-500">Pregnancy history</div>
+
+          {list.length > 0 ? (
+            <div className="grid grid-cols-1 gap-2">
+              {list.map((item) => {
+                const active = Number(item.id) === Number(pregnancy?.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      onViewPregnancy(item.id);
+                      onClose();
+                    }}
+                    className={[
+                      "rounded-xl border px-3 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-[#0F8A99]",
+                      active ? "border-[#0F8A99] bg-teal-50" : "border-slate-200 bg-white hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-slate-900">Pregnancy #{item.pregnancy_no ?? item.id}</span>
+                      <PregnancyStatusBadge status={item.status} />
+                    </div>
+                    <div className="mt-1 text-xs text-slate-600">
+                      LMP: {fmtDate(item.lmp ?? null)} <span className="text-slate-300">•</span> EDD: {fmtDate(item.edd ?? null)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState title="No pregnancy records yet" hint="Create a pregnancy record to start tracking ITR and HBM data." />
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -980,6 +1283,97 @@ function BarangayField({
   );
 }
 
+
+type PregnancyAlertKind = "new" | "complete" | "cancel-complete" | "blocked-new" | null;
+
+type PregnancyAlertState = {
+  kind: PregnancyAlertKind;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "teal" | "amber" | "rose";
+};
+
+function PregnancyConfirmModal({
+  alert,
+  onClose,
+  onConfirm,
+}: {
+  alert: PregnancyAlertState | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!alert?.kind) return null;
+
+  const tone = alert.tone ?? "teal";
+  const toneClasses =
+    tone === "rose"
+      ? {
+          icon: "bg-rose-50 text-rose-700 border-rose-200",
+          button: "bg-rose-600 text-white border-rose-600 hover:bg-rose-700",
+        }
+      : tone === "amber"
+      ? {
+          icon: "bg-amber-50 text-amber-700 border-amber-200",
+          button: "bg-amber-600 text-white border-amber-600 hover:bg-amber-700",
+        }
+      : {
+          icon: "bg-teal-50 text-[#0F8A99] border-teal-200",
+          button: "bg-[#0F8A99] text-white border-[#0F8A99] hover:opacity-95",
+        };
+
+  const isBlocked = alert.kind === "blocked-new";
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 px-3 py-4 sm:items-center" role="dialog" aria-modal="true">
+      <button type="button" aria-label="Close pregnancy alert" className="absolute inset-0 cursor-default" onClick={onClose} />
+
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ duration: 0.18 }}
+        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="p-5 sm:p-6">
+          <div className="flex items-start gap-4">
+            <div className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${toneClasses.icon}`}>
+              {alert.kind === "complete" ? <IconFlag className="h-6 w-6" /> : alert.kind === "cancel-complete" ? <IconUndo className="h-6 w-6" /> : alert.kind === "new" ? <IconPlus className="h-6 w-6" /> : <IconStatus className="h-6 w-6" />}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900">{alert.title}</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">{alert.message}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+            >
+              {alert.cancelLabel ?? (isBlocked ? "Close" : "Cancel")}
+            </button>
+
+            {!isBlocked ? (
+              <button
+                type="button"
+                onClick={onConfirm}
+                className={`inline-flex h-11 items-center justify-center rounded-xl border px-4 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0F8A99] ${toneClasses.button}`}
+              >
+                {alert.confirmLabel ?? "Confirm"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+
 /* ───────── Header ───────── */
 function HeaderBar({
   onBack,
@@ -992,70 +1386,76 @@ function HeaderBar({
   onOpenHistory: () => void;
   historyCount: number;
 }) {
+  const displayName = patient?.full_name || "Unnamed patient";
+  const birth = patient?.birthdate ? fmtMDY(patient.birthdate) : EMPTY;
+  const barangay = patient?.barangay || EMPTY;
+
   return (
-    <header className="relative z-20 border-b border-slate-200 bg-white/90 backdrop-blur oh-no-x">
-      <div className={[ui.shell, "flex h-16 items-center justify-between gap-3", "max-[360px]:oh-stack-xs"].join(" ")}>
-        <div className="flex items-center gap-3 max-[360px]:oh-stack-xs">
+    <header className="relative z-20 border-b border-slate-200 bg-white/95 backdrop-blur oh-no-x">
+      <div className="mx-auto flex min-h-16 w-full max-w-[1600px] items-center gap-3 px-3 py-2 sm:px-4 md:px-6 lg:px-8 xl:px-10">
+        <div className="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 sm:gap-3 lg:gap-4">
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#0F8A99]"
+            className="inline-flex h-10 min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#0F8A99] sm:h-11 sm:px-4 sm:text-sm"
           >
             <img src={BackIcon} alt="" className="h-4 w-4" draggable={false} />
-            <span className="xs:inline">Back</span>
+            <span>Back</span>
           </button>
 
-          <div className="min-w-0 leading-tight">
-            <div className="text-sm font-semibold text-slate-800 truncate max-w-[180px] sm:max-w-xs">
-              {patient?.full_name || "Unnamed patient"}
-            </div>
-            <div className="text-[11px] text-slate-500">
-              {(() => {
-                const bday = patient?.birthdate ? fmtMDY(patient.birthdate) : "—";
-                if (bday && bday !== "—") {
-                  return (
-                    <>
-                      {bday}
-                      {patient?.barangay ? ` · ${patient.barangay}` : null}
-                    </>
-                  );
-                }
-                return patient?.barangay || null;
-              })()}
-            </div>
+          <div className="min-w-0">
+            <div className="grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(220px,1.35fr)_minmax(110px,.48fr)_minmax(120px,.55fr)_auto_auto] md:gap-3">
+              <div className="min-w-0 px-1 md:px-0">
+                <div className="truncate text-[13px] font-bold uppercase tracking-wide text-slate-900 sm:text-sm md:text-base">
+                  {displayName}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500 md:hidden">
+                  <span>{birth}</span>
+                  <span className="text-slate-300">•</span>
+                  <span className="truncate">{barangay}</span>
+                  {patient?.status ? <StatusBadge status={patient.status} /> : null}
+                </div>
+              </div>
 
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {patient?.status ? <StatusBadge status={patient.status} /> : null}
+              <HeaderMetaPill label="Birthdate" value={birth} className="hidden md:block" />
+              <HeaderMetaPill label="Barangay" value={barangay} className="hidden md:block" />
+
+              <div className="hidden md:flex md:justify-center">
+                {patient?.status ? <StatusBadge status={patient.status} /> : null}
+              </div>
 
               <button
                 type="button"
                 onClick={onOpenHistory}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-[3px] text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+                className="hidden h-10 min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99] md:inline-flex"
                 title="View barangay transfer history"
               >
-                <IconHistory className="h-3.5 w-3.5" />
+                <IconHistory className="h-4 w-4" />
                 <span>History</span>
-                <span className="ml-1 inline-flex min-w-[18px] justify-center rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-bold text-slate-700">
+                <span className="inline-flex min-w-[18px] justify-center rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-bold text-slate-700">
                   {historyCount}
                 </span>
               </button>
             </div>
           </div>
-        </div>
 
-        <div className={["flex items-center gap-3 max-[360px]:oh-brand-xs"].join(" ")}>
-          <img
-            src={Logo}
-            alt="OneHealth logo"
-            className="h-10 w-10 rounded-xl select-none max-[360px]:h-9 max-[360px]:w-9"
-            draggable={false}
-          />
-          <div className="leading-tight max-[420px]:hidden">
-            <div className="text-base md:text-lg font-semibold tracking-wide text-[#203D7A] max-[380px]:text-[15px]">
-              ONE HEALTH
-            </div>
-            <div className="text-[11px] uppercase tracking-wider text-slate-500 max-[420px]:hidden">
-              Records · Patient
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={onOpenHistory}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99] md:hidden"
+              title="View barangay transfer history"
+              aria-label="View barangay transfer history"
+            >
+              <IconHistory className="h-4 w-4" />
+            </button>
+
+            <div className="hidden items-center gap-3 sm:flex">
+              <img src={Logo} alt="OneHealth logo" className="h-10 w-10 rounded-xl select-none" draggable={false} />
+              <div className="hidden leading-tight lg:block">
+                <div className="text-base font-semibold tracking-wide text-[#203D7A]">ONE HEALTH</div>
+                <div className="text-[11px] uppercase tracking-wider text-slate-500">Records · Patient</div>
+              </div>
             </div>
           </div>
         </div>
@@ -1086,12 +1486,15 @@ export default function PrenatalEdit() {
     barangayTransferHistory = [],
     csrf: sharedCsrf,
     flash,
+    pregnancy,
+    pregnancies = [],
   } = props as PageProps;
 
   const csrf = sharedCsrf ?? csrfToken();
   const canEditSafe = Boolean(canEdit);
 
   const prenatalBase = `${BASE_PREFIX}/${patient.id}/prenatal`;
+  const pregnancyBase = `${prenatalBase}/pregnancies`;
   const backHref = `/center/records`;
 
   const serverTab: "itr" | "hbm" = (tab as any) ?? "itr";
@@ -1171,9 +1574,111 @@ export default function PrenatalEdit() {
 
   const [transferOpen, setTransferOpen] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [pregnancyManagerOpen, setPregnancyManagerOpen] = React.useState(false);
   const [newOwnerId, setNewOwnerId] = React.useState<string>("");
+  const [pregnancyAlert, setPregnancyAlert] = React.useState<PregnancyAlertState | null>(null);
 
   const historyCount = Array.isArray(barangayTransferHistory) ? barangayTransferHistory.length : 0;
+
+  const createNewPregnancy = React.useCallback(() => {
+    const hasOngoing = Array.isArray(pregnancies)
+      ? pregnancies.some((p) => String(p.status || "").toLowerCase() === "ongoing")
+      : false;
+
+    if (hasOngoing) {
+      setPregnancyAlert({
+        kind: "blocked-new",
+        title: "Ongoing pregnancy exists",
+        message: "Complete the current pregnancy first before creating a new pregnancy record for this mother.",
+        cancelLabel: "I understand",
+        tone: "amber",
+      });
+      return;
+    }
+
+    setPregnancyAlert({
+      kind: "new",
+      title: "Create new pregnancy record?",
+      message: "This will create a separate pregnancy record for this mother. Old ITR, HBM, and postnatal records will stay saved under the previous pregnancy.",
+      confirmLabel: "Create pregnancy",
+      cancelLabel: "Not now",
+      tone: "teal",
+    });
+  }, [pregnancies]);
+
+  const completeCurrentPregnancy = React.useCallback(() => {
+    if (!pregnancy?.id) return;
+
+    setPregnancyAlert({
+      kind: "complete",
+      title: "Complete this pregnancy?",
+      message: "This will mark the current pregnancy as completed. After this, you can create a new pregnancy record if the same mother becomes pregnant again.",
+      confirmLabel: "Complete pregnancy",
+      cancelLabel: "Cancel",
+      tone: "amber",
+    });
+  }, [pregnancy?.id]);
+
+  const cancelCompletePregnancy = React.useCallback(() => {
+    if (!pregnancy?.id) return;
+
+    setPregnancyAlert({
+      kind: "cancel-complete",
+      title: "Cancel pregnancy completion?",
+      message: "This will reopen the selected pregnancy as ongoing. Use this only if the pregnancy was completed by mistake.",
+      confirmLabel: "Reopen pregnancy",
+      cancelLabel: "Keep completed",
+      tone: "teal",
+    });
+  }, [pregnancy?.id]);
+
+  const confirmPregnancyAlert = React.useCallback(() => {
+    if (!pregnancyAlert?.kind) return;
+
+    if (pregnancyAlert.kind === "new") {
+      router.post(
+        pregnancyBase,
+        { _token: csrf },
+        {
+          preserveScroll: true,
+          onFinish: () => setPregnancyAlert(null),
+        } as any
+      );
+      return;
+    }
+
+    if (pregnancyAlert.kind === "complete" && pregnancy?.id) {
+      router.post(
+        `${pregnancyBase}/${pregnancy.id}/complete`,
+        { _token: csrf },
+        {
+          preserveScroll: true,
+          onFinish: () => setPregnancyAlert(null),
+        } as any
+      );
+      return;
+    }
+
+    if (pregnancyAlert.kind === "cancel-complete" && pregnancy?.id) {
+      router.post(
+        `${pregnancyBase}/${pregnancy.id}/reopen`,
+        { _token: csrf },
+        {
+          preserveScroll: true,
+          onFinish: () => setPregnancyAlert(null),
+        } as any
+      );
+      return;
+    }
+
+    setPregnancyAlert(null);
+  }, [pregnancyAlert?.kind, pregnancy?.id, pregnancyBase, csrf]);
+
+  const viewPregnancy = React.useCallback((pregnancyId: number | string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("pregnancy_id", String(pregnancyId));
+    router.visit(url.toString(), { preserveScroll: true, preserveState: false, replace: true });
+  }, []);
 
   const requestOwnership = React.useCallback(() => {
     if (pendingOwnershipRequestId) return;
@@ -1189,7 +1694,7 @@ export default function PrenatalEdit() {
   const [showToast, setShowToast] = React.useState(false);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string | null>>({});
 
-  const initialSplitName = splitWizardStyleFullName(patient.full_name);
+  const initialSplitName = getPatientNameParts(patient);
 
   const [form, setForm] = React.useState({
     first_name: initialSplitName.first_name,
@@ -1213,7 +1718,7 @@ export default function PrenatalEdit() {
 
   React.useEffect(() => {
     if (!editOpen) return;
-    const splitName = splitWizardStyleFullName(patient.full_name);
+    const splitName = getPatientNameParts(patient);
 
     setForm({
       first_name: splitName.first_name,
@@ -1314,6 +1819,12 @@ export default function PrenatalEdit() {
       `/center/records/${patient.id}`,
       {
         full_name,
+        first_name: toAllCaps((form.first_name || "").trim()),
+        middle_name: toAllCaps((form.middle_name || "").trim()),
+        last_name: toAllCaps((form.last_name || "").trim()),
+        suffix: String(form.suffix).toUpperCase() === "OTHERS"
+          ? toAllCaps((form.suffix_other || "").trim())
+          : toAllCaps((form.suffix || "").trim()),
         birthdate: dateOnly(form.birthdate),
         sex: form.sex,
         phone: normalizePhone(form.phone),
@@ -1366,6 +1877,13 @@ export default function PrenatalEdit() {
   return (
     <div className="min-h-screen bg-[#f6fbfb]" style={{ ["--teal" as any]: TEAL, fontFamily: "'Poppins', ui-sans-serif, system-ui" }}>
       <Head title={`Prenatal — ${patient.full_name ?? ""}`} />
+
+      <style>{`
+        html, body { overflow-x: hidden; }
+        @media (max-width: 420px) {
+          .oh-no-x { overflow-x: hidden !important; }
+        }
+      `}</style>
 
       <HeaderBar
         onBack={goBack}
@@ -1500,6 +2018,13 @@ export default function PrenatalEdit() {
           </AnimatePresence>
         </section>
 
+        <PregnancyPanel
+          pregnancy={pregnancy}
+          pregnancies={pregnancies}
+          canEdit={canEditSafe}
+          onOpen={() => setPregnancyManagerOpen(true)}
+        />
+
         <div className="mb-4 mt-5 flex items-center justify-between gap-3 flex-nowrap">
           <div className="min-w-0 overflow-x-auto">
             <div className="inline-block whitespace-nowrap">
@@ -1566,6 +2091,28 @@ export default function PrenatalEdit() {
           )}
         </AnimatePresence>
       </main>
+
+      <PregnancyManagerModal
+        open={pregnancyManagerOpen}
+        pregnancy={pregnancy}
+        pregnancies={pregnancies}
+        canEdit={canEditSafe}
+        onClose={() => setPregnancyManagerOpen(false)}
+        onNewPregnancy={createNewPregnancy}
+        onCompletePregnancy={completeCurrentPregnancy}
+        onCancelCompletePregnancy={cancelCompletePregnancy}
+        onViewPregnancy={viewPregnancy}
+      />
+
+      <AnimatePresence>
+        {pregnancyAlert?.kind ? (
+          <PregnancyConfirmModal
+            alert={pregnancyAlert}
+            onClose={() => setPregnancyAlert(null)}
+            onConfirm={confirmPregnancyAlert}
+          />
+        ) : null}
+      </AnimatePresence>
 
       <ModalShell
         open={transferOpen}
@@ -1903,4 +2450,4 @@ export default function PrenatalEdit() {
       <BackToTopButton />
     </div>
   );
-}
+} 

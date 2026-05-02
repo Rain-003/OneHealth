@@ -708,7 +708,7 @@ export default function RecordsShow() {
   }, [pendingOwnershipRequestId, patient.id, csrf]);
 
   const ui = {
-    shell: "w-full min-w-0 max-w-full md:max-w-[1280px] mx-auto px-2 sm:px-4 md:px-6 lg:px-8",
+    shell: "w-full min-w-0 max-w-none mx-auto px-2 sm:px-3 md:px-4 lg:px-5 xl:px-6 2xl:px-8",
     panel: "w-full min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm p-2 sm:p-4",
   };
 
@@ -981,14 +981,43 @@ export default function RecordsShow() {
       </Head>
 
       <style>{`
+        html, body { overflow-x: hidden !important; }
+
+        .oh-fit {
+          width: 100%;
+          max-width: 100vw;
+          overflow-x: hidden;
+        }
+
+        .oh-no-x { overflow-x: hidden !important; }
+
+        .oh-page-wide {
+          width: 100%;
+          max-width: none !important;
+        }
+
+        .oh-immunization-wide,
+        .oh-immunization-wide > *,
+        .oh-immunization-wide main,
+        .oh-immunization-wide section {
+          width: 100% !important;
+          max-width: none !important;
+        }
+
+        .oh-immunization-wide .max-w-7xl,
+        .oh-immunization-wide .max-w-6xl,
+        .oh-immunization-wide .max-w-5xl,
+        .oh-immunization-wide .max-w-screen-2xl,
+        .oh-immunization-wide .max-w-screen-xl {
+          max-width: none !important;
+        }
+
         @media (max-width: 420px) {
-          html, body { overflow-x: hidden !important; }
           .oh-fit {
             width: 100vw;
             margin-left: calc(50% - 50vw);
             margin-right: calc(50% - 50vw);
           }
-          .oh-no-x { overflow-x: hidden !important; }
           .oh-stack-xs { display: grid !important; grid-template-columns: 1fr; align-items: stretch; gap: .5rem; height: auto !important; padding-top: .5rem; padding-bottom: .5rem; }
           .oh-brand-xs { gap: .5rem; }
           .oh-header-compact { padding-left: .5rem !important; padding-right: .5rem !important; }
@@ -996,66 +1025,75 @@ export default function RecordsShow() {
       `}</style>
 
       <header className="relative z-20 border-b border-slate-200 bg-white/90 backdrop-blur oh-no-x">
-        <div className={[ui.shell, "flex h-16 items-center justify-between gap-3", "max-[360px]:oh-stack-xs"].join(" ")}>
-          <div className="flex items-center gap-3 max-[360px]:oh-stack-xs">
-            <button
-              type="button"
-              onClick={goBack}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#0F8A99]"
-            >
-              <img src={BackIcon} alt="" className="h-4 w-4" draggable={false} />
-              <span className="xs:inline">Back</span>
-            </button>
+        <div className={[ui.shell, "flex min-h-16 items-center gap-2 py-2 sm:gap-3 sm:py-2.5"].join(" ")}>
+          <button
+            type="button"
+            onClick={goBack}
+            className="inline-flex h-10 min-h-[40px] shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-2.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#0F8A99] sm:px-3"
+            aria-label="Back"
+          >
+            <img src={BackIcon} alt="" className="h-4 w-4" draggable={false} />
+            <span className="hidden min-[390px]:inline">Back</span>
+          </button>
 
+          <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1.55fr)_auto_auto_auto] items-center gap-1.5 sm:gap-2 md:grid-cols-[minmax(0,2.1fr)_minmax(92px,.55fr)_minmax(120px,.75fr)_auto_auto] lg:grid-cols-[minmax(260px,2.4fr)_minmax(110px,.65fr)_minmax(160px,.9fr)_auto_auto] xl:gap-3">
             <div className="min-w-0 leading-tight">
-              <div className="text-sm font-semibold text-slate-800 truncate max-w-[180px] sm:max-w-xs">{name}</div>
-              <div className="text-[11px] text-slate-500">
-                {(() => {
-                  const bday = patient?.birthdate ? birth : "—";
-                  const brgy = patient?.barangay ? canonicalBarangay(patient.barangay) : "";
-                  if (bday && bday !== "—") {
-                    return (
-                      <>
-                        {bday}
-                        {brgy ? ` · ${brgy}` : null}
-                      </>
-                    );
-                  }
-                  return brgy || null;
-                })()}
+              <div className="truncate text-[13px] font-semibold text-slate-800 min-[390px]:text-sm sm:text-[15px] md:text-base">
+                {name}
               </div>
-
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                {patient?.status ? <StatusBadge status={patient.status as PatientStatus} /> : null}
-
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-[3px] text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
-                  title="View barangay transfer history"
-                >
-                  <IconHistory className="h-3.5 w-3.5" />
-                  <span>History</span>
-                  <span className="ml-1 inline-flex min-w-[18px] justify-center rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-bold text-slate-700">
-                    {historyCount}
-                  </span>
-                </button>
+              <div className="hidden text-[10px] text-slate-500 min-[390px]:block sm:text-[11px] md:hidden">
+                Patient record
               </div>
             </div>
+
+            <div className="hidden min-w-0 rounded-xl border border-slate-200 bg-slate-50/80 px-2 py-1.5 text-right md:block lg:text-left">
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:text-[10px]">Birthdate</div>
+              <div className="truncate text-[11px] font-semibold text-slate-700 lg:text-xs">{patient?.birthdate ? birth : "—"}</div>
+            </div>
+
+            <div className="hidden min-w-0 rounded-xl border border-slate-200 bg-slate-50/80 px-2 py-1.5 md:block">
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:text-[10px]">Barangay</div>
+              <div className="truncate text-[11px] font-semibold text-slate-700 lg:text-xs">
+                {patient?.barangay ? canonicalBarangay(patient.barangay) : "—"}
+              </div>
+            </div>
+
+            <div className="hidden min-w-0 justify-self-end sm:block">
+              {patient?.status ? <StatusBadge status={patient.status as PatientStatus} compact /> : null}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              className="inline-flex h-9 min-h-[36px] min-w-[38px] shrink-0 items-center justify-center gap-1.5 justify-self-end rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0F8A99] sm:h-10 sm:min-h-[40px] sm:min-w-[44px] md:px-2.5 lg:px-3"
+              title="View barangay transfer history"
+              aria-label={`View barangay transfer history, ${historyCount} item${historyCount === 1 ? "" : "s"}`}
+            >
+              <IconHistory className="h-4 w-4 shrink-0" />
+              <span className="hidden lg:inline">History</span>
+              <span className="inline-flex min-w-[18px] justify-center rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-bold text-slate-700">
+                {historyCount}
+              </span>
+            </button>
           </div>
 
-          <div className={["flex items-center gap-3 max-[360px]:oh-brand-xs"].join(" ")}>
-            <img src={Logo} alt="OneHealth logo" className="h-10 w-10 rounded-xl select-none max-[360px]:h-9 max-[360px]:w-9" draggable={false} />
-            <div className="leading-tight max-[420px]:hidden">
-              <div className="text-base md:text-lg font-semibold tracking-wide text-[#203D7A] max-[380px]:text-[15px]">ONE HEALTH</div>
-              <div className="text-[11px] uppercase tracking-wider text-slate-500 max-[420px]:hidden">Records · Patient</div>
+          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+            <img
+              src={Logo}
+              alt="OneHealth logo"
+              className="h-9 w-9 rounded-xl select-none sm:h-10 sm:w-10"
+              draggable={false}
+            />
+            <div className="hidden leading-tight xl:block">
+              <div className="text-base md:text-lg font-semibold tracking-wide text-[#203D7A]">ONE HEALTH</div>
+              <div className="text-[11px] uppercase tracking-wider text-slate-500">Records · Patient</div>
             </div>
           </div>
         </div>
       </header>
 
-      <main className={`${ui.shell} py-2 sm:py-4`}>
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <main className={`${ui.shell} oh-page-wide py-2 sm:py-3`}>
+        <div className="mb-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
           <h1 className="min-w-0 text-xl md:text-2xl font-semibold text-[#203D7A] tracking-tight flex items-center gap-2">
             <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#0F8A99]/10 shrink-0">
               <IconClipboard className="h-4 w-4 text-[#0F8A99]" />
@@ -1064,8 +1102,8 @@ export default function RecordsShow() {
           </h1>
 
           {canEdit ? (
-            <div className="w-full lg:w-auto">
-              <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <div className="w-full lg:w-auto lg:justify-self-end">
+              <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
                 <ActionButton
                   icon={<IconHistory className="h-4 w-4" />}
                   label="Barangay history"
@@ -1112,29 +1150,25 @@ export default function RecordsShow() {
           )}
         </div>
 
-        <section className={isImmunization ? "w-full" : ui.panel}>
-          <div className="mx-0">
-            <div className="overflow-x-auto px-0 sm:px-0">
-              <div className="min-w-0 w-full sm:min-w-0 sm:w-auto">
-                {isImmunization && immunization?.matrix ? (
-                  <ImmunizationCard
-                    patient={patient as any}
-                    matrix={immunization.matrix!}
-                    doses={immunization.doses as Dose[]}
-                    editable={canEdit}
-                    focus={focusTarget}
-                  />
-                ) : (
-                  <div className="text-sm text-slate-700">
-                    This patient is not registered as an <span className="font-medium">immunization</span> patient.
-                  </div>
-                )}
+        <section className={isImmunization ? "w-full min-w-0" : ui.panel}>
+          <div className="oh-immunization-wide w-full min-w-0 overflow-x-hidden">
+            {isImmunization && immunization?.matrix ? (
+              <ImmunizationCard
+                patient={patient as any}
+                matrix={immunization.matrix!}
+                doses={immunization.doses as Dose[]}
+                editable={canEdit}
+                focus={focusTarget}
+              />
+            ) : (
+              <div className="text-sm text-slate-700">
+                This patient is not registered as an <span className="font-medium">immunization</span> patient.
               </div>
-            </div>
+            )}
           </div>
         </section>
 
-        <div className="mx-auto mt-12 flex max-w-2xl items-center justify-between border-t border-slate-200 pt-6">
+        <div className="mt-8 flex w-full max-w-none items-center justify-between border-t border-slate-200 pt-5">
           <div className="flex items-center gap-2">
             <img src={Logo} alt="OneHealth logo" className="h-8 w-8 rounded-lg" />
             <span className="text-sm font-semibold tracking-wide text-[#203D7A]">ONE HEALTH</span>
@@ -1252,9 +1286,9 @@ export default function RecordsShow() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 pb-24">
-              <form onSubmit={submitEdit} className="space-y-6">
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5">
+            <div className="flex-1 overflow-y-auto px-3 py-4 pb-24 sm:px-5 sm:py-5 lg:px-6">
+              <form onSubmit={submitEdit} className="space-y-4 sm:space-y-5">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
                   <h3 className="text-sm font-semibold text-slate-900 mb-4">Patient identity</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1354,7 +1388,7 @@ export default function RecordsShow() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
                   <h3 className="text-sm font-semibold text-slate-900 mb-4">Contact and location</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1416,7 +1450,7 @@ export default function RecordsShow() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
                   <h3 className="text-sm font-semibold text-slate-900 mb-4">Parents</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1437,7 +1471,7 @@ export default function RecordsShow() {
                 </section>
 
                 {isImmunization && (
-                  <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5">
+                  <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
                     <h3 className="text-sm font-semibold text-slate-900 mb-4">Immunization details</h3>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1534,7 +1568,7 @@ export default function RecordsShow() {
                   </section>
                 )}
 
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
                   <h3 className="text-sm font-semibold text-slate-900 mb-4">Record status</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1592,34 +1626,39 @@ export default function RecordsShow() {
   );
 }
 
-function StatusBadge({ status }: { status?: PatientStatus | null }) {
+function StatusBadge({ status, compact = false }: { status?: PatientStatus | null; compact?: boolean }) {
   if (!status) return null;
 
   const normalized = String(status).toLowerCase() as PatientStatus;
 
   let label = "Active";
   let classes =
-    "inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
+    "inline-flex shrink-0 items-center justify-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
     "border-emerald-200 bg-emerald-50 text-emerald-800";
 
   if (normalized === "deceased") {
     label = "Deceased";
     classes =
-      "inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
+      "inline-flex shrink-0 items-center justify-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
       "border-rose-200 bg-rose-50 text-rose-800";
   } else if (normalized === "transferred") {
     label = "Transferred";
     classes =
-      "inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
+      "inline-flex shrink-0 items-center justify-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
       "border-amber-200 bg-amber-50 text-amber-800";
   } else if (normalized === "left_without_notice") {
     label = "Without notice";
     classes =
-      "inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
+      "inline-flex shrink-0 items-center justify-center rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide " +
       "border-slate-200 bg-slate-100 text-slate-800";
   }
 
-  return <span className={classes}>{label}</span>;
+  return (
+    <span className={classes} title={label}>
+      <span className={compact ? "hidden lg:inline" : ""}>{label}</span>
+      {compact ? <span className="lg:hidden">{label.charAt(0)}</span> : null}
+    </span>
+  );
 }
 
 function DateFieldWithToday({

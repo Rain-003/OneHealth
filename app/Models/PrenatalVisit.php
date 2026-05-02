@@ -11,6 +11,7 @@ class PrenatalVisit extends Model
     protected $table = 'prenatal_visits';
 
     protected $fillable = [
+        'pregnancy_id',
         'patient_id',
         'barangay',
         'visit_date',

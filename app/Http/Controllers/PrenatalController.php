@@ -9,6 +9,7 @@ use App\Models\PrenatalPlan;
 use App\Models\PrenatalTopModel;   // ITR (top)
 use App\Models\PrenatalVisit;      // ITR visits
 use App\Models\HbmHistory;         // HBM history
+use App\Models\Pregnancy;           // pregnancy records
 use App\Models\User;               // transferTargets
 use App\Models\Activity;           // barangay transfer history
 use Carbon\Carbon;
@@ -16,9 +17,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Inertia\Inertia;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Http\Controllers\Prenatal\Concerns\ResolvesPregnancy;
 
 class PrenatalController extends Controller
 {
+    use ResolvesPregnancy;
+
     /*
      |----------------------------------------------------------------------
      | READ-ONLY: patient-facing card
@@ -33,76 +37,96 @@ class PrenatalController extends Controller
             abort(401);
         }
 
-        // Load from tables
-        $planRow = PrenatalPlan::where('patient_id', $patient->id)->first();
-        $itrRow  = PrenatalTopModel::where('patient_id', $patient->id)->first();
-        $visCol  = PrenatalVisit::where('patient_id', $patient->id)
+        $pregnancy = $this->selectedOrActivePregnancyFor($patient, (int) $request->query('pregnancy_id') ?: null);
+        $pregnancies = $this->pregnancyListFor($patient);
+
+        // Load from tables for the active pregnancy only.
+        $planRow = ($pregnancy ? PrenatalPlan::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $itrRow = ($pregnancy ? PrenatalTopModel::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $visCol = ($pregnancy ? PrenatalVisit::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
             ->orderBy('visit_date', 'asc')
-            ->get();
+            ->get() : collect());
 
         // Fallbacks to patient JSON snapshots
-        $plan   = $planRow?->toArray() ?? (array) ($patient->prenatal_plan ?: []);
-        $itr    = $this->withItrAliases($itrRow?->toArray() ?? (array) ($patient->prenatal_itr ?: []));
+        $plan = $planRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_plan');
+        $itr = $this->withItrAliases($itrRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_itr'));
         $visits = $visCol->count()
             ? $visCol->toArray()
-            : $this->sortVisitsSnapshot((array) ($patient->prenatal_visits ?: []));
+            : $this->sortVisitsSnapshot($this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits'));
 
         $itrVisitsForHbm = $this->buildItrVisitsForHbm(
-            $visCol->count() ? $visCol->all() : (array) ($patient->prenatal_visits ?: [])
+            $visCol->count() ? $visCol->all() : $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits')
         );
 
         // HBM History
-        $hbmHistory    = HbmHistory::where('patient_id', $patient->id)->first();
-        $historyLegacy = $patient->prenatal_history ?: null;
+        $hbmHistory = ($pregnancy ? HbmHistory::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $historyLegacy = $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_history') ?: null;
 
         // HBM Current (read-only)
-        $hbmCur = (array) ($patient->prenatal_hbm_current ?: []);
+        $hbmCur = $this->pregnancyScopedSnapshot(
+            (array) ($patient->prenatal_hbm_current ?: []),
+            $this->pregnancyId($pregnancy),
+            ['__pregnancy_id', 'pregnancy_id']
+        );
 
         $current = [
-            'rows'             => (array) ($hbmCur['rows'] ?? []),
-            'visits'           => array_values((array) ($hbmCur['visits'] ?? [])),
-            'lmp_date'         => $hbmCur['lmp_date'] ?? null,
-            'edd_date'         => $hbmCur['edd_date'] ?? null,
+            'rows' => (array) ($hbmCur['rows'] ?? []),
+            'visits' => array_values((array) ($hbmCur['visits'] ?? [])),
+            'lmp_date' => $hbmCur['lmp_date'] ?? null,
+            'edd_date' => $hbmCur['edd_date'] ?? null,
             'pregnancy_number' => $hbmCur['pregnancy_number'] ?? null,
         ];
 
         $delivery = $hbmCur['delivery'] ?? null;
 
         // HBM After (read-only) — normalize & provide BOTH object and legacy array
-        $hbmAfter = (array) ($patient->prenatal_hbm_after ?: []);
+        $hbmAfter = $this->pregnancyScopedSnapshot(
+            (array) ($patient->prenatal_hbm_after ?: []),
+            $this->pregnancyId($pregnancy),
+            ['_pregnancy_id', '__pregnancy_id', 'pregnancy_id']
+        );
         if (empty($hbmAfter['visits']) && !empty($hbmAfter['after_cols'])) {
             $hbmAfter['visits'] = $hbmAfter['after_cols']; // legacy fallback
         }
         $postnatal = $hbmAfter['visits'] ?? [];
 
         return Inertia::render('patients/prenatal-card', [
-            'patient'        => $this->patientSummary($patient),
+            'patient' => $this->patientSummary($patient),
+            'pregnancy' => $this->pregnancySummary($pregnancy),
+            'pregnancies' => $pregnancies,
 
             // hydrate ITR from table OR JSON snapshot, with alias keys
-            'itr'            => $itr,
-            'plan'           => $plan,
-            'visits'         => array_values((array) $visits),
+            'itr' => $itr,
+            'plan' => $plan,
+            'visits' => array_values((array) $visits),
 
             // NEW: normalized ITR visits for HBM Current auto-fill
-            'itr_visits'     => $itrVisitsForHbm,
+            'itr_visits' => $itrVisitsForHbm,
 
-            'history'        => $hbmHistory?->toArray(),
+            'history' => $hbmHistory?->toArray(),
             'history_legacy' => $historyLegacy,
 
             // HBM current in the SAME shape as editor
-            'current'        => $current,
+            'current' => $current,
 
-            'current_meta'   => [
-                'lmp_date'         => $current['lmp_date'],
-                'edd_date'         => $current['edd_date'],
+            'current_meta' => [
+                'lmp_date' => $current['lmp_date'],
+                'edd_date' => $current['edd_date'],
                 'pregnancy_number' => $current['pregnancy_number'],
             ],
 
-            'delivery'       => $delivery,
+            'delivery' => $delivery,
 
             // provide full after object + legacy array
-            'after'          => $hbmAfter,
-            'postnatal'      => array_values((array) $postnatal),
+            'after' => $hbmAfter,
+            'postnatal' => array_values((array) $postnatal),
         ]);
     }
 
@@ -124,7 +148,18 @@ class PrenatalController extends Controller
 
         $patient->loadMissing(['owner:id,name,barangay']);
 
-        $canEdit = (bool) ($user && ($user->role === 'admin' || (int) $patient->owner_id === (int) $user->id));
+        $canEdit = false;
+
+        if ($user) {
+            $sameAssignedBarangay =
+                trim(mb_strtolower((string) $patient->assigned_barangay)) !== '' &&
+                trim(mb_strtolower((string) $patient->assigned_barangay)) === trim(mb_strtolower((string) $user->barangay));
+
+            $canEdit =
+                $user->role === 'admin' ||
+                (int) $patient->owner_id === (int) $user->id ||
+                $sameAssignedBarangay;
+        }
 
         $pendingRequestId = null;
         if ($user && $user->role !== 'admin' && !$canEdit) {
@@ -155,83 +190,103 @@ class PrenatalController extends Controller
          */
         $barangayTransferHistory = $this->getBarangayTransferHistory((int) $patient->id, 50);
 
-        // Load from tables
-        $planRow = PrenatalPlan::where('patient_id', $patient->id)->first();
-        $itrRow  = PrenatalTopModel::where('patient_id', $patient->id)->first();
-        $visCol  = PrenatalVisit::where('patient_id', $patient->id)
+        $pregnancy = $this->selectedOrActivePregnancyFor($patient, (int) $request->query('pregnancy_id') ?: null);
+        $pregnancies = $this->pregnancyListFor($patient);
+
+        // Load from tables for the active pregnancy only.
+        $planRow = ($pregnancy ? PrenatalPlan::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $itrRow = ($pregnancy ? PrenatalTopModel::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $visCol = ($pregnancy ? PrenatalVisit::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
             ->orderBy('visit_date', 'asc')
-            ->get();
+            ->get() : collect());
 
         // Fallbacks to patient JSON snapshots
-        $plan   = $planRow?->toArray() ?? (array) ($patient->prenatal_plan ?: []);
-        $itr    = $this->withItrAliases($itrRow?->toArray() ?? (array) ($patient->prenatal_itr ?: []));
+        $plan = $planRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_plan');
+        $itr = $this->withItrAliases($itrRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_itr'));
         $visits = $visCol->count()
             ? $visCol->toArray()
-            : $this->sortVisitsSnapshot((array) ($patient->prenatal_visits ?: []));
+            : $this->sortVisitsSnapshot($this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits'));
 
         $itrVisitsForHbm = $this->buildItrVisitsForHbm(
-            $visCol->count() ? $visCol->all() : (array) ($patient->prenatal_visits ?: [])
+            $visCol->count() ? $visCol->all() : $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits')
         );
 
         // HBM history + legacy
-        $hbmHistory    = HbmHistory::where('patient_id', $patient->id)->first();
-        $historyLegacy = $patient->prenatal_history ?: null;
+        $hbmHistory = ($pregnancy ? HbmHistory::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $historyLegacy = $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_history') ?: null;
 
         // HBM Current (editor shell)
-        $hbmCur         = (array) ($patient->prenatal_hbm_current ?: []);
-        $current_rows   = (array) ($hbmCur['rows'] ?? []);
+        $hbmCur = $this->pregnancyScopedSnapshot(
+            (array) ($patient->prenatal_hbm_current ?: []),
+            $this->pregnancyId($pregnancy),
+            ['__pregnancy_id', 'pregnancy_id']
+        );
+        $current_rows = (array) ($hbmCur['rows'] ?? []);
         $current_visits = array_values((array) ($hbmCur['visits'] ?? []));
-        $delivery       = $hbmCur['delivery'] ?? null;
+        $delivery = $hbmCur['delivery'] ?? null;
 
         // HBM After (editor shell) — normalize & provide BOTH
-        $hbmAfter = (array) ($patient->prenatal_hbm_after ?: []);
+        $hbmAfter = $this->pregnancyScopedSnapshot(
+            (array) ($patient->prenatal_hbm_after ?: []),
+            $this->pregnancyId($pregnancy),
+            ['_pregnancy_id', '__pregnancy_id', 'pregnancy_id']
+        );
         if (empty($hbmAfter['visits']) && !empty($hbmAfter['after_cols'])) {
             $hbmAfter['visits'] = $hbmAfter['after_cols'];
         }
         $postnatal = array_values((array) ($hbmAfter['visits'] ?? []));
 
         return Inertia::render('center/prenatal-edit', [
-            'patient'   => $this->patientSummary($patient),
+            'patient' => $this->patientSummary($patient),
+            'pregnancy' => $this->pregnancySummary($pregnancy),
+            'pregnancies' => $pregnancies,
 
-            'owner'     => $patient->owner ? [
-                'id'       => $patient->owner->id,
-                'name'     => $patient->owner->name,
+            'owner' => $patient->owner ? [
+                'id' => $patient->owner->id,
+                'name' => $patient->owner->name,
                 'barangay' => $patient->owner->barangay,
             ] : null,
 
-            'canEdit'   => $canEdit,
+            'canEdit' => $canEdit,
             'pendingOwnershipRequestId' => $pendingRequestId,
 
             // used by transfer modal + history modal
-            'transferTargets'         => $transferTargets,
+            'transferTargets' => $transferTargets,
             'barangayTransferHistory' => $barangayTransferHistory,
 
             // hydrate ITR from table OR JSON snapshot (with aliases)
-            'itr'       => $itr,
-            'plan'      => $plan,
-            'visits'    => array_values((array) $visits),
+            'itr' => $itr,
+            'plan' => $plan,
+            'visits' => array_values((array) $visits),
 
             // NEW: normalized ITR visits for HBM Current auto-fill
             'itr_visits' => $itrVisitsForHbm,
 
-            'history'   => $hbmHistory?->toArray(),
+            'history' => $hbmHistory?->toArray(),
             'history_legacy' => $historyLegacy,
 
-            'current'   => [
-                'rows'             => $current_rows,
-                'visits'           => $current_visits,
-                'lmp_date'         => $hbmCur['lmp_date'] ?? null,
-                'edd_date'         => $hbmCur['edd_date'] ?? null,
+            'current' => [
+                'rows' => $current_rows,
+                'visits' => $current_visits,
+                'lmp_date' => $hbmCur['lmp_date'] ?? null,
+                'edd_date' => $hbmCur['edd_date'] ?? null,
                 'pregnancy_number' => $hbmCur['pregnancy_number'] ?? null,
-                'delivery'         => $delivery,
+                'delivery' => $delivery,
             ],
 
             // Pass full 'after' object so HBMAfter.tsx hydrates correctly
-            'after'     => $hbmAfter,
+            'after' => $hbmAfter,
             'postnatal' => $postnatal,
 
-            'tab'       => $tab,
-            'sub'       => $sub,
+            'tab' => $tab,
+            'sub' => $sub,
         ]);
     }
 
@@ -239,6 +294,71 @@ class PrenatalController extends Controller
      | Helpers
      |======================================================================== */
 
+    private function pregnancyListFor(PatientsModel $patient): array
+    {
+        return Pregnancy::query()
+            ->where('patient_id', $patient->id)
+            ->orderByDesc('pregnancy_no')
+            ->orderByDesc('id')
+            ->get(['id', 'patient_id', 'pregnancy_no', 'lmp', 'edd', 'status', 'outcome', 'completed_at'])
+            ->map(fn(Pregnancy $pregnancy) => $this->pregnancySummary($pregnancy))
+            ->values()
+            ->all();
+    }
+
+    private function pregnancySummary(?Pregnancy $pregnancy): ?array
+    {
+        if (!$pregnancy) {
+            return null;
+        }
+
+        return [
+            'id' => $pregnancy->id,
+            'patient_id' => $pregnancy->patient_id,
+            'pregnancy_no' => $pregnancy->pregnancy_no,
+            'lmp' => $this->ymd($pregnancy->lmp),
+            'edd' => $this->ymd($pregnancy->edd),
+            'status' => $pregnancy->status,
+            'outcome' => $pregnancy->outcome,
+            'completed_at' => $this->ymd($pregnancy->completed_at),
+        ];
+    }
+
+    private function pregnancyScopedSnapshot(array $snapshot, ?int $pregnancyId, array $keys): array
+    {
+        if (!$pregnancyId) {
+            return [];
+        }
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $snapshot) && (int) $snapshot[$key] !== $pregnancyId) {
+                return [];
+            }
+        }
+
+        return $snapshot;
+    }
+
+    private function pregnancyId(?Pregnancy $pregnancy): ?int
+    {
+        return $pregnancy ? (int) $pregnancy->id : null;
+    }
+
+    /**
+     * Legacy JSON columns belong to the original pregnancy only.
+     * This prevents Pregnancy #2+ from showing old Pregnancy #1 data when no rows exist yet.
+     */
+    private function legacySnapshotFor(PatientsModel $patient, ?Pregnancy $pregnancy, string $column): array
+    {
+        if (!$pregnancy) {
+            return [];
+        }
+
+        if ((int) ($pregnancy->pregnancy_no ?? 1) !== 1) {
+            return [];
+        }
+
+        return (array) ($patient->{$column} ?: []);
+    }
     /**
      * Barangay transfer history (Activity trail)
      * Uses Activity.type = patient.transferred and Activity.properties JSON.
@@ -271,28 +391,28 @@ class PrenatalController extends Controller
             $by = null;
             if ($a->relationLoaded('user') && $a->user) {
                 $by = [
-                    'id'       => $a->user->id,
-                    'name'     => $a->user->name,
+                    'id' => $a->user->id,
+                    'name' => $a->user->name,
                     'barangay' => $a->user->barangay,
                 ];
             } elseif (!empty($a->user_id)) {
                 $u = User::query()->find((int) $a->user_id, ['id', 'name', 'barangay']);
                 if ($u) {
                     $by = [
-                        'id'       => $u->id,
-                        'name'     => $u->name,
+                        'id' => $u->id,
+                        'name' => $u->name,
                         'barangay' => $u->barangay,
                     ];
                 }
             }
 
             return [
-                'id'            => $a->id,
-                'date'          => $a->created_at ? Carbon::parse($a->created_at)->toDateTimeString() : null,
+                'id' => $a->id,
+                'date' => $a->created_at ? Carbon::parse($a->created_at)->toDateTimeString() : null,
                 'from_barangay' => data_get($props, 'from_barangay'),
-                'to_barangay'   => data_get($props, 'to_barangay'),
-                'description'   => $a->description,
-                'by'            => $by,
+                'to_barangay' => data_get($props, 'to_barangay'),
+                'description' => $a->description,
+                'by' => $by,
             ];
         })->values()->all();
     }
@@ -352,7 +472,7 @@ class PrenatalController extends Controller
         $visitDate = $this->ymd($visit['visit_date'] ?? null);
 
         $aogDays = $visit['aog_days'] ?? null;
-        $weeks   = $this->daysToWeeks($aogDays);
+        $weeks = $this->daysToWeeks($aogDays);
 
         $monthIndex = $this->visitMonthIndexFromAog($aogDays);
 
@@ -366,22 +486,22 @@ class PrenatalController extends Controller
         }
 
         $gestationalWeeks = $weeks !== null ? (string) $weeks : null;
-        $nextVisitDate    = $this->computeNextVisitDate($visitDate, $gestationalWeeks);
+        $nextVisitDate = $this->computeNextVisitDate($visitDate, $gestationalWeeks);
 
         return [
-            'id'                => $visit['id'] ?? null,
-            'month_index'       => $monthIndex,
-            'column_index'      => $monthIndex,
-            'visit_date'        => $visitDate,
+            'id' => $visit['id'] ?? null,
+            'month_index' => $monthIndex,
+            'column_index' => $monthIndex,
+            'visit_date' => $visitDate,
             'gestational_weeks' => $gestationalWeeks,
-            'aog'               => $gestationalWeeks,
-            'aog_weeks'         => $gestationalWeeks,
-            'bp'                => $visit['bp'] ?? null,
-            'weight_kg'         => $this->numOrNull($visit['wt'] ?? null),
-            'wt'                => $this->numOrNull($visit['wt'] ?? null),
-            'fundal_height_cm'  => $this->numOrNull($visit['fh'] ?? null),
-            'fh'                => $this->numOrNull($visit['fh'] ?? null),
-            'next_visit_date'   => $nextVisitDate,
+            'aog' => $gestationalWeeks,
+            'aog_weeks' => $gestationalWeeks,
+            'bp' => $visit['bp'] ?? null,
+            'weight_kg' => $this->numOrNull($visit['wt'] ?? null),
+            'wt' => $this->numOrNull($visit['wt'] ?? null),
+            'fundal_height_cm' => $this->numOrNull($visit['fh'] ?? null),
+            'fh' => $this->numOrNull($visit['fh'] ?? null),
+            'next_visit_date' => $nextVisitDate,
         ];
     }
 
@@ -552,7 +672,7 @@ class PrenatalController extends Controller
         $phone = $patient->phone_number ?? $patient->phone ?? null;
 
         $summary['phone_number'] = $phone;
-        $summary['phone']        = $phone;
+        $summary['phone'] = $phone;
 
         return $summary;
     }
@@ -560,21 +680,33 @@ class PrenatalController extends Controller
     /**
      * Generate and stream a PDF of the prenatal record
      */
-    public function print(PatientsModel $patient)
+    public function print(Request $request, PatientsModel $patient)
     {
-        $planRow = PrenatalPlan::where('patient_id', $patient->id)->first();
-        $itrRow  = PrenatalTopModel::where('patient_id', $patient->id)->first();
-        $visCol  = PrenatalVisit::where('patient_id', $patient->id)
-            ->orderBy('visit_date', 'asc')->get();
+        $pregnancy = $this->selectedOrActivePregnancyFor($patient, (int) $request->query('pregnancy_id') ?: null);
+        if (!$pregnancy) {
+            abort(404, 'No pregnancy record found for this patient.');
+        }
+
+        $planRow = ($pregnancy ? PrenatalPlan::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $itrRow = ($pregnancy ? PrenatalTopModel::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $visCol = ($pregnancy ? PrenatalVisit::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->orderBy('visit_date', 'asc')
+            ->get() : collect());
 
         /** @var \Barryvdh\DomPDF\PDF $pdf */
         $pdf = Pdf::loadView('prenatal.print', [
             'patient' => $this->patientSummary($patient),
-            'plan'    => $planRow?->toArray() ?? (array) ($patient->prenatal_plan ?: []),
-            'itr'     => $this->withItrAliases($itrRow?->toArray() ?? (array) ($patient->prenatal_itr ?: [])),
-            'visits'  => $visCol->count()
+            'pregnancy' => $this->pregnancySummary($pregnancy),
+            'plan' => $planRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_plan'),
+            'itr' => $this->withItrAliases($itrRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_itr')),
+            'visits' => $visCol->count()
                 ? $visCol->toArray()
-                : $this->sortVisitsSnapshot((array) ($patient->prenatal_visits ?: [])),
+                : $this->sortVisitsSnapshot($this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits')),
         ]);
 
         return $pdf->stream('prenatal-record.pdf');
@@ -583,21 +715,33 @@ class PrenatalController extends Controller
     /**
      * Generate and download a PDF of the prenatal record
      */
-    public function download(PatientsModel $patient)
+    public function download(Request $request, PatientsModel $patient)
     {
-        $planRow = PrenatalPlan::where('patient_id', $patient->id)->first();
-        $itrRow  = PrenatalTopModel::where('patient_id', $patient->id)->first();
-        $visCol  = PrenatalVisit::where('patient_id', $patient->id)
-            ->orderBy('visit_date', 'asc')->get();
+        $pregnancy = $this->selectedOrActivePregnancyFor($patient, (int) $request->query('pregnancy_id') ?: null);
+        if (!$pregnancy) {
+            abort(404, 'No pregnancy record found for this patient.');
+        }
+
+        $planRow = ($pregnancy ? PrenatalPlan::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $itrRow = ($pregnancy ? PrenatalTopModel::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->first() : null);
+        $visCol = ($pregnancy ? PrenatalVisit::where('patient_id', $patient->id)
+            ->where('pregnancy_id', $pregnancy->id)
+            ->orderBy('visit_date', 'asc')
+            ->get() : collect());
 
         /** @var \Barryvdh\DomPDF\PDF $pdf */
         $pdf = Pdf::loadView('prenatal.print', [
             'patient' => $this->patientSummary($patient),
-            'plan'    => $planRow?->toArray() ?? (array) ($patient->prenatal_plan ?: []),
-            'itr'     => $this->withItrAliases($itrRow?->toArray() ?? (array) ($patient->prenatal_itr ?: [])),
-            'visits'  => $visCol->count()
+            'pregnancy' => $this->pregnancySummary($pregnancy),
+            'plan' => $planRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_plan'),
+            'itr' => $this->withItrAliases($itrRow?->toArray() ?? $this->legacySnapshotFor($patient, $pregnancy, 'prenatal_itr')),
+            'visits' => $visCol->count()
                 ? $visCol->toArray()
-                : $this->sortVisitsSnapshot((array) ($patient->prenatal_visits ?: [])),
+                : $this->sortVisitsSnapshot($this->legacySnapshotFor($patient, $pregnancy, 'prenatal_visits')),
         ]);
 
         return $pdf->download('prenatal-record.pdf');

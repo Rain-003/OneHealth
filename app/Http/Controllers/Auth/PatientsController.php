@@ -45,7 +45,16 @@ class PatientsController extends Controller
     }
 
     /**
-     * "Access with info" login (name + birthdate + barangay + SMS OTP).
+     * "Access with info" login.
+     *
+     * The patient may identify themself using ONE of these in the same input:
+     *  - full name
+     *  - first name + last name
+     *  - first name + middle name + last name
+     *  - surname, first name format
+     *  - registered phone number
+     *
+     * Birthdate + barangay are still required, and SMS OTP/trusted-device checks stay in place.
      *
      * Two modes:
      *  - Step 1 (no OTP yet): validate identity, try trusted device, otherwise send SMS OTP.
@@ -134,35 +143,37 @@ class PatientsController extends Controller
          |--------------------------------------------------------------
          */
         $data = $request->validate([
+            // Keep field name as full_name so the existing patient login UI does not need to change immediately.
             'full_name' => ['required', 'string', 'min:2', 'max:255'],
             'birthdate' => ['required', 'date'],
             'barangay'  => ['required', 'string', 'min:2', 'max:255'],
         ]);
 
-        // Normalize inputs: trim, collapse spaces, lowercase
-        $norm = fn (?string $s) => Str::of($s ?? '')
-            ->trim()
-            ->replaceMatches('/\s+/', ' ')
-            ->lower()
-            ->toString();
+        $identifier = $this->normalizeText($data['full_name']);
+        $brgy       = $this->normalizeText($data['barangay']);
+        $dob        = Carbon::parse($data['birthdate'])->toDateString();
 
-        $full = $norm($data['full_name']);
-        $brgy = $norm($data['barangay']);
-        $dob  = $data['birthdate'];
-
-        $patient = PatientsModel::query()
+        $matches = PatientsModel::query()
             ->whereDate('birthdate', $dob)
             ->whereRaw('LOWER(TRIM(barangay)) = ?', [$brgy])
-            ->whereRaw('LOWER(TRIM(full_name)) = ?', [$full])
-            ->first();
+            ->get()
+            ->filter(fn (PatientsModel $patient) => $this->patientMatchesAccessIdentifier($patient, $identifier))
+            ->values();
 
-        if (!$patient) {
+        if ($matches->count() !== 1) {
+            $message = $matches->count() > 1
+                ? 'Multiple patient records matched those details. Please use your complete full name or registered phone number.'
+                : 'No matching patient found with those details.';
+
             return back()
                 ->withErrors([
-                    'full_name' => 'No matching patient found with those details.',
+                    'full_name' => $message,
                 ])
                 ->withInput();
         }
+
+        /** @var \App\Models\PatientsModel $patient */
+        $patient = $matches->first();
 
         // Block OTP if patient is marked as deceased
         if ($patient->status === 'deceased') {
@@ -413,5 +424,99 @@ class PatientsController extends Controller
             'patient_otp_phone_masked',
             'patient_otp_last_sent_at',
         ]);
+    }
+
+    /**
+     * Compare patient data against the access text entered in the existing full_name field.
+     */
+    protected function patientMatchesAccessIdentifier(PatientsModel $patient, string $identifier): bool
+    {
+        if ($identifier === '') {
+            return false;
+        }
+
+        $inputDigits = $this->normalizePhoneDigits($identifier);
+        if ($inputDigits !== '') {
+            foreach ($this->patientPhoneCandidates($patient) as $phone) {
+                $phoneDigits = $this->normalizePhoneDigits($phone);
+                if ($phoneDigits !== '' && $phoneDigits === $inputDigits) {
+                    return true;
+                }
+            }
+        }
+
+        foreach ($this->patientNameCandidates($patient) as $candidate) {
+            if ($candidate !== '' && $candidate === $identifier) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Supported patient name formats for access matching.
+     */
+    protected function patientNameCandidates(PatientsModel $patient): array
+    {
+        $first  = $this->normalizeText($patient->first_name ?? null);
+        $middle = $this->normalizeText($patient->middle_name ?? null);
+        $last   = $this->normalizeText($patient->last_name ?? null);
+        $suffix = $this->normalizeText($patient->suffix ?? null);
+        $full   = $this->normalizeText($patient->full_name ?? null);
+
+        $candidates = [
+            $full,
+            trim(implode(' ', array_filter([$first, $middle, $last, $suffix]))),
+            trim(implode(' ', array_filter([$first, $last]))),
+            trim(implode(' ', array_filter([$first, $middle, $last]))),
+            trim(implode(' ', array_filter([$last, $first]))),
+            trim(implode(' ', array_filter([$last, $first, $middle]))),
+            $last && $first ? trim($last . ', ' . trim(implode(' ', array_filter([$first, $middle, $suffix])))) : '',
+            $last && $first ? trim($last . ', ' . trim(implode(' ', array_filter([$first, $suffix])))) : '',
+        ];
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($value) => $this->normalizeText($value),
+            $candidates
+        ))));
+    }
+
+    /**
+     * Supported phone fields for access matching.
+     */
+    protected function patientPhoneCandidates(PatientsModel $patient): array
+    {
+        return array_filter([
+            $patient->phone_number ?? null,
+            $patient->contact_no ?? null,
+            $patient->contact_number ?? null,
+            $patient->mobile ?? null,
+            $patient->phone ?? null,
+        ]);
+    }
+
+    protected function normalizeText(?string $value): string
+    {
+        return Str::of($value ?? '')
+            ->trim()
+            ->replaceMatches('/\s+/', ' ')
+            ->lower()
+            ->toString();
+    }
+
+    protected function normalizePhoneDigits(?string $value): string
+    {
+        $digits = preg_replace('/\D/', '', (string) ($value ?? '')) ?: '';
+
+        if (str_starts_with($digits, '63')) {
+            $digits = substr($digits, 2);
+        }
+
+        if (str_starts_with($digits, '0')) {
+            $digits = substr($digits, 1);
+        }
+
+        return strlen($digits) >= 10 ? substr($digits, -10) : '';
     }
 }

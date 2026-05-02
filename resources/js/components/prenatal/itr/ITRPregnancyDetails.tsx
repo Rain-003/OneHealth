@@ -479,17 +479,17 @@ ob_gtpal: gtpalString,
   const farFuture = "2100-12-31";
 
   return (
-    <div className="min-h-[100dvh] flex flex-col w-full max-w-full">
-      <div className="mx-auto w-full max-w-screen-2xl px-2 sm:px-3 lg:px-4 flex-1 overflow-x-hidden">
+    <div className="min-h-[100dvh] w-full max-w-full overflow-x-hidden bg-white pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-20">
+      <div className="mx-auto flex w-full max-w-screen-2xl flex-1 flex-col px-3 sm:px-4 lg:px-6 xl:px-8">
         {/* Header + lock toggle */}
         <div className="mt-1 mb-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-[17px] sm:text-[18px] font-semibold text-slate-900 tracking-tight">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-[16px] font-semibold tracking-tight text-slate-900 sm:text-[18px]">
                 Pregnancy Details (ITR)
               </h2>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end">
               <span
                 ref={statusRef}
                 className="text-[11px] sm:text-[12px] text-slate-600"
@@ -500,16 +500,18 @@ ob_gtpal: gtpalString,
                   type="button"
                   onClick={() => setLocked((prev) => !prev)}
                   className={[
-                    "inline-flex h-9 w-9 items-center justify-center border text-xs font-medium rounded-md",
+                    "inline-flex h-10 min-w-[112px] items-center justify-center gap-1.5 rounded-md border px-3 sm:h-9",
+                    "text-xs font-semibold shadow-sm transition",
+                    "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]/30",
                     locked
-                      ? "bg-slate-100 border-slate-200 text-slate-600 bg-white shadow-sm"
-                      : "text-white",
+                      ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0e7c8a]"
+                      : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
                   ].join(" ")}
-                  style={locked ? undefined : { backgroundColor: TEAL, borderColor: TEAL }}
                   aria-pressed={!locked ? "true" : "false"}
-                  title={locked ? "Click to enable editing" : "Click to lock"}
+                  title={locked ? "Locked - click to enable editing" : "Editing - click to lock"}
                 >
                   {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+                  <span>{locked ? "Locked" : "Editing"}</span>
                 </button>
               )}
             </div>
@@ -519,7 +521,7 @@ ob_gtpal: gtpalString,
 
         {/* Locked banner */}
         {locked && (
-          <div className="mt-3 mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-[13px] text-slate-700">
+          <div className="mt-3 mb-2 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 sm:items-center sm:text-[13px]">
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600">
               <IconLock className="h-3 w-3" />
             </span>
@@ -540,7 +542,7 @@ ob_gtpal: gtpalString,
         {/* Everything below dims + non-clickable when locked */}
         <div className={locked ? "opacity-50 transition-opacity" : "transition-opacity"}>
           <div className={locked ? "pointer-events-none" : ""}>
-            <section className="rounded-md bg-white shadow-sm divide-y divide-slate-200 overflow-hidden">
+            <section className="w-full">
               <form
                 ref={formRef}
                 onSubmit={async (e) => {
@@ -572,12 +574,12 @@ if (emptyFields.length > 0) {
 
 await commitToDb();
                 }}
-                className="px-3 sm:px-4 py-3 space-y-5 text-[14px] leading-[1.45]"
+                className="space-y-4 py-3 text-[14px] leading-[1.45] sm:space-y-5"
               >
                 {/* OB section */}
                 <section className="space-y-3.5">
                   {/* OB dates */}
-                  <div className="rounded-md border border-slate-200 bg-slate-50/40 px-3 py-3">
+                  <div className="rounded-lg bg-slate-50/60 px-3 py-3 sm:px-4">
                     <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
                       <div>
                         <p className="text-[10px] font-semibold tracking-[0.22em] text-slate-600 uppercase">
@@ -588,12 +590,12 @@ await commitToDb();
                       <p className="text-[10px] text-slate-500">* All fields in this section are required.</p>
                     </div>
 
-                    <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1.05fr)]">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.05fr)]">
                       <Field label="Last Menstrual Period (LMP) *">
-                        <div className="flex items-center gap-1.5">
+                        <div className="grid grid-cols-2 gap-1.5 min-[420px]:flex min-[420px]:items-center">
                           <TextInput
                             type="date"
-                            className="h-9 text-[14px] flex-1"
+                            className="col-span-2 h-10 w-full text-[14px] min-[420px]:h-9 min-[420px]:flex-1"
                             min={minDate}
                             max={today}
                             value={form.lmp || ""}
@@ -607,7 +609,7 @@ await commitToDb();
                             type="button"
                             disabled={locked}
                             onClick={() => touch("lmp", today as any)}
-                            className="h-9 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            className="h-10 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 min-[420px]:h-9"
                           >
                             TODAY
                           </button>
@@ -615,7 +617,7 @@ await commitToDb();
                             type="button"
                             disabled={locked || !form.lmp}
                             onClick={() => touch("lmp", "" as any)}
-                            className="h-9 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            className="h-10 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 min-[420px]:h-9"
                           >
                             CLEAR
                           </button>
@@ -626,7 +628,7 @@ await commitToDb();
                         <div>
                           <TextInput
                             type="date"
-                            className="h-9 text-[14px] w-full"
+                            className="h-10 w-full text-[14px] sm:h-9"
                             min={minDate}
                             max={farFuture}
                             value={form.edc || ""}
@@ -643,14 +645,14 @@ await commitToDb();
                   </div>
 
                   {/* OB score & history */}
-                  <div className="rounded-md border border-slate-200 px-3 py-3">
+                  <div className="rounded-lg bg-slate-50/40 px-3 py-3 sm:px-4">
                     <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
                       <p className="text-[10px] font-semibold tracking-[0.22em] text-slate-600 uppercase">
                         OB Score and History
                       </p>
                     </div>
 
-                    <div className="grid gap-2.5 sm:grid-cols-7">
+                    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
                       <Field label="G — Gravida *">
                         <ObNumberInput
                           value={form.ob_g}
@@ -710,7 +712,7 @@ await commitToDb();
 
                 {/* Risk Codes */}
                 <div>
-                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
                     <div>
                       <div className="text-[13px] font-semibold text-slate-900">Risk Codes</div>
                       <p className="text-[12px] text-slate-600">
@@ -720,7 +722,7 @@ await commitToDb();
                     </div>
                   </div>
 
-                  <div className="grid gap-2.5 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                     {(
                       [
                         [
@@ -752,8 +754,8 @@ await commitToDb();
                         <fieldset
                           key={flagK}
                           className={[
-                            "grid grid-cols-1 gap-1.5 rounded-[6px] px-2.5 py-2.5 border transition",
-                            hasRiskDate ? "border-rose-500 bg-rose-50/60" : "border-slate-200 bg-white",
+                            "grid grid-cols-1 gap-2 rounded-lg px-3 py-3 transition sm:px-3.5",
+                            hasRiskDate ? "border border-rose-300 bg-rose-50/70" : "bg-slate-50/50",
                           ].join(" ")}
                         >
                           <legend
@@ -777,11 +779,11 @@ await commitToDb();
                               Date noted
                             </label>
 
-                            <div className="flex items-center gap-1.5">
+                            <div className="grid grid-cols-2 gap-1.5 min-[420px]:flex min-[420px]:items-center">
                               <TextInput
                                 type="date"
                                 className={[
-                                  "h-9 text-[13px] flex-1",
+                                  "col-span-2 h-10 w-full text-[13px] min-[420px]:h-9 min-[420px]:flex-1",
                                   hasRiskDate
                                     ? "border-rose-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500"
                                     : "",
@@ -805,7 +807,7 @@ await commitToDb();
                                   touch(dateK as keyof FormState, today as any);
                                   touch(flagK as keyof FormState, true as any);
                                 }}
-                                className="h-9 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="h-10 rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 min-[420px]:h-9"
                               >
                                 TODAY
                               </button>
@@ -817,7 +819,7 @@ await commitToDb();
                                   touch(dateK as keyof FormState, "" as any);
                                   touch(flagK as keyof FormState, false as any);
                                 }}
-                                className="h-9 rounded-md border border-rose-300 bg-white px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                className="h-10 rounded-md border border-rose-300 bg-white px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 min-[420px]:h-9"
                               >
                                 CLEAR
                               </button>
@@ -837,7 +839,7 @@ await commitToDb();
                   </div>
                 </div>
 
-                <div className="h-12 sm:h-0" />
+                <div className="h-20 sm:h-16" />
                 <button type="submit" className="hidden" aria-hidden="true" />
               </form>
             </section>
@@ -846,23 +848,23 @@ await commitToDb();
       </div>
 
       {/* Sticky bottom actions */}
-      <footer className="fixed bottom-0 inset-x-0 z-[10] pointer-events-none">
-        <div className="mx-auto w-full max-w-screen-2xl px-0 sm:px-4 lg:px-8 flex justify-end">
+      <footer className="fixed inset-x-0 bottom-0 z-[10] pointer-events-none pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto flex w-full max-w-screen-2xl justify-end px-0 sm:px-4 lg:px-8">
           <div
             className="
               mb-0.5
               inline-flex
               w-full sm:w-auto
-              rounded-t-md border border-slate-200
+              rounded-t-xl border-t border-slate-200
               bg-white/95 backdrop-blur shadow-sm
-              px-3 sm:px-4 py-2
+              px-3 py-2 sm:rounded-md sm:border sm:border-slate-200 sm:px-4
               pointer-events-auto
             "
           >
             <button
               type="button"
               onClick={() => !locked && formRef.current?.requestSubmit()}
-              className="w-full sm:w-auto h-10 rounded-md bg-oh-teal px-5 text-[14px] text-white hover:bg-oh-tealDark disabled:opacity-60 inline-flex items-center justify-center gap-1.5"
+              className="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-md bg-oh-teal px-5 text-[14px] font-semibold text-white hover:bg-oh-tealDark disabled:opacity-60 sm:h-10 sm:w-auto"
               disabled={saving || locked}
             >
               <IconSave className="h-4 w-4" />
@@ -921,7 +923,7 @@ function ObNumberInput({
         disabled={locked}
         value={value}
         onInput={handleInput}
-        className={`h-9 text-[14px] w-full ${borderClass}`}
+        className={`h-10 w-full text-[14px] sm:h-9 ${borderClass}`}
         placeholder={placeholder}
       />
       {localError && <p className="mt-0.5 text-[11px] text-rose-600">{localError}</p>}

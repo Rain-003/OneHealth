@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 
 class ManagePatientsController extends Controller
 {
@@ -66,7 +67,14 @@ class ManagePatientsController extends Controller
         // --- Validate ---
         $data = $request->validate([
             'patient_type' => ['required', 'in:immunization,pregnancy'],
+
+            // Name fields. Keep full_name for backward compatibility, but save split columns too.
             'full_name' => ['required', 'string', 'max:255'],
+            'first_name' => ['nullable', 'string', 'max:100'],
+            'middle_name' => ['nullable', 'string', 'max:100'],
+            'last_name' => ['nullable', 'string', 'max:100'],
+            'suffix' => ['nullable', 'string', 'max:20'],
+            'suffix_other' => ['nullable', 'string', 'max:20'],
 
             'birthdate' => [
                 Rule::requiredIf(fn() => $request->input('patient_type') === 'immunization'),
@@ -98,7 +106,7 @@ class ManagePatientsController extends Controller
             'philhealth_no' => ['nullable', 'string', 'max:191'],
 
             // Pregnancy
-            'height_cm' => ['nullable', 'integer', 'min:0', 'max:400'],
+            'height_cm' => ['nullable', 'numeric', 'min:0', 'max:400'],
             'civil_status' => ['nullable', 'string', 'max:50'],
 
             // Immunization extra fields
@@ -127,15 +135,44 @@ class ManagePatientsController extends Controller
             'address_house_street' => ['nullable', 'string', 'max:191'],
             'address_line2' => ['nullable', 'string', 'max:191'],
             'address_postal_code' => ['nullable', 'string', 'max:30'],
+
+            // Wizard UX
+            'stay' => ['sometimes', 'boolean'],
         ]);
 
         // Auto-assign ownership to creator
         if (Auth::check()) {
-            $data['owner_id'] = Auth::id();
+            $user = Auth::user();
+
+            $data['owner_id'] = $user->id;
+
+
+            $data['assigned_barangay'] = $user->barangay ?: ($data['barangay'] ?? null);
         }
 
-        // Normalize strings
-        $data['full_name'] = Str::of($data['full_name'])->squish()->__toString();
+        // Normalize and save split name fields.
+        $suffixValue = $data['suffix'] ?? null;
+        if (strtoupper((string) $suffixValue) === 'OTHERS') {
+            $suffixValue = $data['suffix_other'] ?? null;
+        }
+
+        $data['first_name'] = $this->cleanNamePart($data['first_name'] ?? $first);
+        $data['middle_name'] = $this->cleanNamePart($data['middle_name'] ?? $middle);
+        $data['last_name'] = $this->cleanNamePart($data['last_name'] ?? $last);
+        $data['suffix'] = $this->cleanNamePart($suffixValue ?? $suffix);
+        unset($data['suffix_other']);
+
+        $rebuiltFullName = trim(implode(' ', array_filter([
+            $data['first_name'],
+            $data['middle_name'],
+            $data['last_name'],
+            $data['suffix'],
+        ])));
+
+        // Prefer the split fields when present, otherwise keep full_name fallback.
+        $data['full_name'] = $rebuiltFullName !== ''
+            ? $rebuiltFullName
+            : Str::of($data['full_name'])->squish()->__toString();
 
         foreach ([
             'mother_name',
@@ -158,7 +195,7 @@ class ManagePatientsController extends Controller
             $data['barangay'] = Str::of($data['barangay'])->squish()->__toString();
         }
 
-        // Map phone aliases → contact_no
+        // Map phone aliases -> contact_no
         $data['contact_no'] = $data['contact_no']
             ?? ($data['contact_number'] ?? ($data['phone'] ?? null));
 
@@ -179,7 +216,7 @@ class ManagePatientsController extends Controller
             }
         }
 
-        // Map wizard key → DB column (philhealth)
+        // Map wizard key -> DB column (philhealth)
         $data['philhealth_no'] = $data['philhealth_no'] ?? ($data['philhealth_number'] ?? null);
         unset($data['philhealth_number']);
 
@@ -210,8 +247,8 @@ class ManagePatientsController extends Controller
             }
         }
 
-        // Normalize numeric extra fields
-        foreach (['birth_weight_kg', 'child_height_cm'] as $numField) {
+        // Normalize numeric extra fields, including decimal pregnancy height.
+        foreach (['birth_weight_kg', 'child_height_cm', 'height_cm'] as $numField) {
             if (array_key_exists($numField, $data)) {
                 $data[$numField] = ($data[$numField] === '' || $data[$numField] === null)
                     ? null
@@ -250,8 +287,41 @@ class ManagePatientsController extends Controller
         } elseif (!empty($data['address'])) {
             $data['address'] = Str::of($data['address'])->squish()->__toString();
         }
+
         if (($data['patient_type'] ?? null) === 'pregnancy') {
             $data['sex'] = 'Female';
+        }
+
+        // Remove non-DB helper keys before create.
+        unset(
+            $data['province'],
+            $data['state_province'],
+            $data['city'],
+            $data['city_municipality'],
+            $data['street'],
+            $data['purok'],
+            $data['house_no'],
+            $data['address_province'],
+            $data['address_city'],
+            $data['address_house_street'],
+            $data['address_line2'],
+            $data['address_postal_code'],
+            $data['stay']
+        );
+
+        // Backend duplicate/similar patient protection.
+        // The wizard may only have paginated patients, so this DB check is the real safeguard.
+        if ($duplicate = $this->findPossibleDuplicatePatient($data)) {
+            $details = trim(implode(' | ', array_filter([
+                'Existing record: ' . $duplicate->full_name,
+                $duplicate->birthdate ? 'Birthdate: ' . Carbon::parse($duplicate->birthdate)->toDateString() : null,
+                $duplicate->barangay ? 'Barangay: ' . $duplicate->barangay : null,
+                $duplicate->patient_type ? 'Type: ' . ucfirst($duplicate->patient_type) : null,
+            ])));
+
+            throw ValidationException::withMessages([
+                'full_name' => $details . '. Please check the existing patient record before adding another one.',
+            ]);
         }
 
         // Create the patient
@@ -274,8 +344,154 @@ class ManagePatientsController extends Controller
             ],
         ]);
 
+        if ($request->boolean('stay')) {
+            return redirect()
+                ->back()
+                ->with('success', 'Patient created. You may add another patient.');
+        }
+
         return redirect()
             ->route('center.records.show', ['patient' => $patient->id])
             ->with('success', 'Patient created.');
+    }
+
+    /**
+     * Finds a likely duplicate patient before saving.
+     *
+     * Exact duplicates are blocked strongly. Similar records are also blocked when
+     * enough identifiers match, such as name + birthdate + barangay/contact/parent.
+     */
+    private function findPossibleDuplicatePatient(array $data): ?PatientsModel
+    {
+        $fullName = $this->compareKey($data['full_name'] ?? null);
+
+        if ($fullName === '') {
+            return null;
+        }
+
+        $patientType = $data['patient_type'] ?? null;
+        $birthdate = $data['birthdate'] ?? null;
+        $barangay = $this->compareKey($data['barangay'] ?? null);
+        $firstName = $this->compareKey($data['first_name'] ?? null);
+        $lastName = $this->compareKey($data['last_name'] ?? null);
+        $contactNo = $this->digitsOnly($data['contact_no'] ?? null);
+        $motherName = $this->compareKey($data['mother_name'] ?? null);
+        $fatherName = $this->compareKey($data['father_name'] ?? null);
+        $placeOfBirth = $this->compareKey($data['place_of_birth'] ?? null);
+
+        // 1) Strong exact duplicate check.
+        $exact = PatientsModel::query()
+            ->when($patientType, fn($q) => $q->where('patient_type', $patientType))
+            ->whereRaw('LOWER(TRIM(full_name)) = ?', [$fullName])
+            ->when($birthdate, fn($q) => $q->whereDate('birthdate', $birthdate))
+            ->when($barangay !== '', fn($q) => $q->whereRaw('LOWER(TRIM(barangay)) = ?', [$barangay]))
+            ->first();
+
+        if ($exact) {
+            return $exact;
+        }
+
+        // 2) Pull a small candidate set, then score in PHP for safer fuzzy-ish matching.
+        $candidates = PatientsModel::query()
+            ->when($patientType, fn($q) => $q->where('patient_type', $patientType))
+            ->where(function ($q) use ($fullName, $firstName, $lastName, $birthdate, $contactNo, $motherName) {
+                $q->whereRaw('LOWER(TRIM(full_name)) = ?', [$fullName]);
+
+                if ($firstName !== '' && $lastName !== '') {
+                    $q->orWhere(function ($nameQuery) use ($firstName, $lastName) {
+                        $nameQuery
+                            ->whereRaw('LOWER(TRIM(first_name)) = ?', [$firstName])
+                            ->whereRaw('LOWER(TRIM(last_name)) = ?', [$lastName]);
+                    });
+                }
+
+                if ($birthdate) {
+                    $q->orWhereDate('birthdate', $birthdate);
+                }
+
+                if ($contactNo !== '') {
+                    $q->orWhere('contact_no', $contactNo);
+                }
+
+                if ($motherName !== '') {
+                    $q->orWhereRaw('LOWER(TRIM(mother_name)) = ?', [$motherName]);
+                }
+            })
+            ->latest('id')
+            ->limit(30)
+            ->get();
+
+        foreach ($candidates as $candidate) {
+            $score = 0;
+
+            $candidateFullName = $this->compareKey($candidate->full_name);
+            $candidateFirstName = $this->compareKey($candidate->first_name);
+            $candidateLastName = $this->compareKey($candidate->last_name);
+            $candidateBarangay = $this->compareKey($candidate->barangay);
+            $candidateContactNo = $this->digitsOnly($candidate->contact_no);
+            $candidateMotherName = $this->compareKey($candidate->mother_name);
+            $candidateFatherName = $this->compareKey($candidate->father_name);
+            $candidatePlaceOfBirth = $this->compareKey($candidate->place_of_birth);
+            $candidateBirthdate = $candidate->birthdate
+                ? Carbon::parse($candidate->birthdate)->toDateString()
+                : null;
+
+            if ($candidateFullName !== '' && $candidateFullName === $fullName) {
+                $score += 4;
+            }
+
+            if ($firstName !== '' && $lastName !== '' && $candidateFirstName === $firstName && $candidateLastName === $lastName) {
+                $score += 3;
+            }
+
+            if ($birthdate && $candidateBirthdate === $birthdate) {
+                $score += 3;
+            }
+
+            if ($barangay !== '' && $candidateBarangay === $barangay) {
+                $score += 2;
+            }
+
+            if ($contactNo !== '' && $candidateContactNo === $contactNo) {
+                $score += 2;
+            }
+
+            if ($motherName !== '' && $candidateMotherName === $motherName) {
+                $score += 2;
+            }
+
+            if ($fatherName !== '' && $candidateFatherName === $fatherName) {
+                $score += 1;
+            }
+
+            if ($placeOfBirth !== '' && $candidatePlaceOfBirth === $placeOfBirth) {
+                $score += 1;
+            }
+
+            // Block when identifiers are strong enough to be considered same/similar.
+            // Examples: exact name + birthdate, or first/last + birthdate + barangay/contact/parent.
+            if ($score >= 7) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function compareKey(?string $value): string
+    {
+        $clean = Str::of((string) $value)->squish()->lower()->__toString();
+        return preg_replace('/[^a-z0-9 ]/', '', $clean) ?? '';
+    }
+
+    private function digitsOnly(?string $value): string
+    {
+        return preg_replace('/\D/', '', (string) $value) ?? '';
+    }
+
+    private function cleanNamePart(?string $value): ?string
+    {
+        $clean = Str::of((string) $value)->squish()->__toString();
+        return $clean !== '' ? $clean : null;
     }
 }

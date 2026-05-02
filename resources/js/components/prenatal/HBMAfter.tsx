@@ -538,7 +538,7 @@ function SegYN({
   danger,
 }: {
   value: boolean | null | undefined;
-  onChange: (v: boolean) => void;
+  onChange: (v: boolean | null) => void;
   labels?: { no?: string; yes?: string };
   disabled?: boolean;
   danger?: boolean;
@@ -559,7 +559,7 @@ function SegYN({
         className={`${base} ${value === false ? on.replace("bg-rose-600 text-white border-rose-600", "bg-oh-teal text-white border-oh-teal") : off}`}
         onClick={() => {
           if (disabled) return;
-          onChange(false);
+          onChange(value === false ? null : false);
         }}
       >
         {L.no}
@@ -569,7 +569,7 @@ function SegYN({
         className={`${base} ${value === true ? on : off}`}
         onClick={() => {
           if (disabled) return;
-          onChange(true);
+          onChange(value === true ? null : true);
         }}
       >
         {L.yes}
@@ -1021,7 +1021,7 @@ export default function HBMAfter({ patient, token, ...rest }: HBMTabProps) {
       },
     }));
 
-  const setCheck = (row: CheckKey, c: ColKey, val: boolean) =>
+  const setCheck = (row: CheckKey, c: ColKey, val: boolean | null) =>
     mutate((d) => ({
       ...d,
       checks: {
@@ -1296,19 +1296,18 @@ export default function HBMAfter({ patient, token, ...rest }: HBMTabProps) {
               <button
                 type="button"
                 onClick={toggleLock}
+                aria-pressed={!locked}
                 className={[
-                  "h-9 w-9 rounded-lg flex items-center justify-center border-2 text-xs font-medium transition",
+                  "inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium shadow-sm transition",
+                  "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]",
                   locked
-                    ? "bg-slate-100 border-slate-300 text-slate-700 shadow-inner bg-white"
-                    : "bg-[var(--oh-teal,_#0F8A99)] border-[var(--oh-teal,_#0F8A99)] text-white shadow-lg",
+                    ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]"
+                    : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
                 ].join(" ")}
-                title={locked ? "Locked (Tap to edit)" : "Editing (Tap to lock)"}
+                title={locked ? "Record is locked" : "Editing enabled"}
               >
-                {locked ? (
-                  <IconLock className="h-4 w-4" />
-                ) : (
-                  <IconUnlock className="h-4 w-4" />
-                )}
+                {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+                <span>{locked ? "Locked" : "Editing"}</span>
               </button>
             </div>
           </div>

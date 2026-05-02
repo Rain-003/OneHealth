@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Notifications\Notifiable;
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+
 
 /**
  * App\Models\PatientsModel
@@ -58,6 +60,7 @@ class PatientsModel extends Authenticatable
 
     protected $fillable = [
         'owner_id',
+        'assigned_barangay',
         'patient_type',
         'full_name',
         'first_name',
@@ -66,9 +69,8 @@ class PatientsModel extends Authenticatable
         'suffix',
         'birthdate',
         'barangay',
-
-
         'status',
+
         // Header / demographics
         'sex',
         'place_of_birth',
@@ -105,14 +107,13 @@ class PatientsModel extends Authenticatable
         'delivery_type',
         'tt_status_mother',
         'tt_status_date',
-
     ];
 
     protected $casts = [
         'birthdate' => 'date',
         'birth_weight_kg' => 'float',
         'birth_length_cm' => 'float',
-        'height_cm' => 'integer',
+        'height_cm' => 'decimal:2',
         'prenatal_itr' => 'array',
         'prenatal_plan' => 'array',
         'prenatal_visits' => 'array',
@@ -125,7 +126,6 @@ class PatientsModel extends Authenticatable
         'date_nbs_done' => 'date',
         'child_height_cm' => 'decimal:2',
         'tt_status_date' => 'date',
-
     ];
 
     protected $appends = [
@@ -153,16 +153,34 @@ class PatientsModel extends Authenticatable
 
     public function immunizations(): HasMany
     {
-        return $this->hasMany(\App\Models\ImmunizationRecord::class, 'patient_id');
+        return $this->hasMany(ImmunizationRecord::class, 'patient_id');
     }
 
     public function owner()
     {
-        return $this->belongsTo(\App\Models\User::class, 'owner_id');
+        return $this->belongsTo(User::class, 'owner_id');
     }
 
     public function trustedDevices(): HasMany
     {
-        return $this->hasMany(\App\Models\PatientTrustedDevice::class, 'patient_id');
+        return $this->hasMany(PatientTrustedDevice::class, 'patient_id');
+    }
+
+    public function pregnancies(): HasMany
+    {
+        return $this->hasMany(Pregnancy::class, 'patient_id');
+    }
+
+    public function activePregnancy(): HasOne
+    {
+        return $this->hasOne(Pregnancy::class, 'patient_id')
+            ->where('status', 'ongoing')
+            ->latestOfMany();
+    }
+
+    public function latestPregnancy(): HasOne
+    {
+        return $this->hasOne(Pregnancy::class, 'patient_id')
+            ->latestOfMany();
     }
 }

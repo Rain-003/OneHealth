@@ -1343,15 +1343,18 @@ export default function ITRVisits({
             <button
               type="button"
               onClick={() => setLocked((prev) => !prev)}
+              aria-pressed={!locked}
               className={[
-                "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-slate-700 shadow-sm transition",
+                "inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium shadow-sm transition",
+                "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]",
                 locked
-                  ? "border-slate-300 bg-white hover:bg-slate-50"
-                  : "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]",
+                  ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]"
+                  : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
               ].join(" ")}
-              title={locked ? "Click to enable editing" : "Click to lock"}
+              title={locked ? "Record is locked" : "Editing enabled"}
             >
               {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+              <span>{locked ? "Locked" : "Editing"}</span>
             </button>
 
             <Button variant="outline" onClick={addVisitSmart} disabled={locked}>

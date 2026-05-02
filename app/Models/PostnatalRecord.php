@@ -12,6 +12,7 @@ class PostnatalRecord extends Model
     // Table name defaults to 'postnatal_records'
 
     protected $fillable = [
+        'pregnancy_id',
         'patient_id',
         'barangay',
         'followup_date',

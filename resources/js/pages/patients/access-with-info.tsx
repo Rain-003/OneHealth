@@ -77,20 +77,20 @@ export default function PatientAccessWithInfo() {
     otpSent ? flashCooldown : 0,
   );
 
-  // open modal whenever backend says OTP was sent
+  // Open modal whenever backend says OTP was sent.
   React.useEffect(() => {
     if (otpSent) {
       setOtpModalOpen(true);
     }
   }, [otpSent]);
 
-  // sync countdown from backend flash when a fresh OTP was sent/resend happened
+  // Sync countdown from backend flash when a fresh OTP was sent/resend happened.
   React.useEffect(() => {
     if (!otpSent) return;
     setResendCountdown(flashCooldown);
   }, [otpSent, flashCooldown]);
 
-  // realtime countdown
+  // Realtime countdown.
   React.useEffect(() => {
     if (!otpModalOpen || resendCountdown <= 0) return;
 
@@ -132,7 +132,7 @@ export default function PatientAccessWithInfo() {
   function resendOtp() {
     if (resendCountdown > 0 || otpForm.processing) return;
 
-    // restart countdown immediately so user cannot spam-click
+    // Restart countdown immediately so user cannot spam-click.
     setResendCountdown(RESEND_COOLDOWN_SECONDS);
 
     otpForm.post(RESEND_URL, {
@@ -223,7 +223,7 @@ export default function PatientAccessWithInfo() {
           <div className="mx-auto max-w-2xl text-center">
             <h1 className="text-xl md:text-2xl font-semibold text-[#203D7A]">Patient Access</h1>
             <p className="mt-2 text-sm md:text-[15px] text-slate-600">
-              Provide your details to access your records dashboard.
+              Provide your identifying details to access your records dashboard.
             </p>
           </div>
 
@@ -266,19 +266,23 @@ export default function PatientAccessWithInfo() {
                 )}
 
                 <label htmlFor="full_name" className="mb-1 block text-sm font-medium">
-                  Full name
+                  Name or registered phone number
                 </label>
                 <input
                   id="full_name"
                   type="text"
                   inputMode="text"
-                  autoComplete="name"
-                  placeholder="e.g. Juan / Maria Dela Cruz"
+                  autoComplete="off"
+                  placeholder="e.g. MARIA CRUZ, CRUZ, MARIA, or 09123456789"
                   value={data.full_name}
                   onChange={(e) => setData('full_name', e.target.value)}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
                   required
                 />
+                <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                  You may enter your full name, first name and last name, surname-first format,
+                  or the mobile number registered in your record.
+                </p>
                 <InputError message={errors.full_name} className="mt-1" />
 
                 <label htmlFor="birthdate" className="mt-4 mb-1 block text-sm font-medium">
@@ -320,7 +324,7 @@ export default function PatientAccessWithInfo() {
                       {b}
                     </option>
                   ))}
-                  <option value={OTHER_VALUE}>Other…</option>
+                  <option value={OTHER_VALUE}>Other...</option>
                 </select>
 
                 {showOther && (
@@ -348,7 +352,7 @@ export default function PatientAccessWithInfo() {
                   disabled={processing}
                   className="mt-6 w-full rounded-lg bg-[#0F8A99] px-4 py-2.5 text-[15px] font-medium text-white shadow-sm transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99] disabled:opacity-60"
                 >
-                  {processing ? 'Please wait…' : 'Access my records'}
+                  {processing ? 'Please wait...' : 'Access my records'}
                 </button>
               </form>
             </section>
@@ -426,7 +430,7 @@ export default function PatientAccessWithInfo() {
                     otpForm.setData('otp', e.target.value.replace(/\D/g, '').slice(0, 6))
                   }
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-center text-[15px] font-semibold tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
-                  placeholder="••••••"
+                  placeholder="******"
                   autoFocus
                 />
                 <InputError message={otpForm.errors.otp} className="mt-1" />
@@ -462,7 +466,7 @@ export default function PatientAccessWithInfo() {
                     disabled={resendCountdown > 0 || otpForm.processing}
                     className="inline-flex items-center justify-center rounded-lg px-2 py-1 text-xs font-semibold text-[#0F8A99] transition hover:underline disabled:cursor-not-allowed disabled:text-slate-400 disabled:no-underline"
                   >
-                    {otpForm.processing ? 'Sending…' : 'Resend code'}
+                    {otpForm.processing ? 'Sending...' : 'Resend code'}
                   </button>
                 </div>
               </div>
@@ -472,7 +476,7 @@ export default function PatientAccessWithInfo() {
                 disabled={otpForm.processing || otpForm.data.otp.length !== 6}
                 className="inline-flex w-full items-center justify-center rounded-lg bg-[#0F8A99] px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99] disabled:opacity-60"
               >
-                {otpForm.processing ? 'Verifying…' : 'Confirm code'}
+                {otpForm.processing ? 'Verifying...' : 'Confirm code'}
               </button>
             </form>
 
@@ -488,12 +492,12 @@ export default function PatientAccessWithInfo() {
           <div className="flex flex-col items-center">
             <img
               src={LogoLoading}
-              alt="Submitting…"
+              alt="Submitting..."
               className="h-50 w-50 select-none"
               style={{ animation: 'gentle-pulse 1.6s ease-in-out infinite' }}
               draggable={false}
             />
-            <p className="mt-4 text-xl text-slate-700">Checking your details…</p>
+            <p className="mt-4 text-xl text-slate-700">Checking your details...</p>
           </div>
         </div>
       )}

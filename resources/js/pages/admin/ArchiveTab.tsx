@@ -10,7 +10,14 @@ type ArchiveItem = {
   reason?: string | null;
   archived_at?: string | null;
   restored_at?: string | null;
-  patient?: { id: number; full_name?: string | null } | null;
+  patient?: {
+    id: number;
+    full_name?: string | null;
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    suffix?: string | null;
+  } | null;
   user?: { id: number; name?: string | null } | null;
   patient_name?: string | null;
   deleted_by?: string | null;
@@ -69,6 +76,44 @@ function getArchiveTypeTone(type?: string | null) {
   }
 
   return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+function middleInitial(name?: string | null) {
+  const cleaned = String(name ?? "").trim();
+  if (!cleaned) return "";
+  const firstPart = cleaned.split(/\s+/)[0] ?? "";
+  const firstChar = firstPart.charAt(0).toUpperCase();
+  return firstChar ? `${firstChar}.` : "";
+}
+
+function formatPatientDisplayName(patient?: ArchiveItem["patient"] | null, fallback?: string | null) {
+  const last = String(patient?.last_name ?? "").trim();
+  const first = String(patient?.first_name ?? "").trim();
+  const middle = middleInitial(patient?.middle_name);
+  const suffix = String(patient?.suffix ?? "").trim();
+
+  if (last || first || middle || suffix) {
+    const nameBeforeSuffix = last
+      ? [last, [first, middle].filter(Boolean).join(" ")].filter(Boolean).join(", ")
+      : [first, middle].filter(Boolean).join(" ");
+
+    return [nameBeforeSuffix, suffix].filter(Boolean).join(", ").trim() || fallback || "";
+  }
+
+  return String(patient?.full_name ?? fallback ?? "").trim();
+}
+
+function getArchivePatientName(item: ArchiveItem) {
+  return formatPatientDisplayName(item.patient, item.patient_name);
+}
+
+function getArchiveLabel(item: ArchiveItem) {
+  const patientName = getArchivePatientName(item);
+  const type = String(item.item_type ?? "").toLowerCase();
+
+  if (type.includes("patient") && patientName) return patientName;
+
+  return item.item_label || patientName || `Item #${item.item_id ?? item.id}`;
 }
 
 export default function ArchiveTab({
@@ -164,7 +209,7 @@ export default function ArchiveTab({
     const needle = q.trim().toLowerCase();
     if (needle) {
       list = list.filter((a) => {
-        const patientName = a.patient?.full_name || a.patient_name || "";
+        const patientName = getArchivePatientName(a);
         const archivedBy = a.user?.name || a.deleted_by || "";
         const haystack = [
           a.item_label || "",
@@ -319,10 +364,10 @@ export default function ArchiveTab({
                     const archived = fmt(a.archived_at || a.deleted_at || a.created_at);
                     const restored = fmt(a.restored_at);
 
-                    const patientName = a.patient?.full_name || a.patient_name || null;
+                    const patientName = getArchivePatientName(a) || null;
                     const archivedBy = a.user?.name || a.deleted_by || null;
 
-                    const label = a.item_label || patientName || `Item #${a.item_id ?? a.id}`;
+                    const label = getArchiveLabel(a);
                     const typeLabel = prettifyType(a.item_type);
                     const typeTone = getArchiveTypeTone(a.item_type);
 
@@ -570,10 +615,7 @@ export default function ArchiveTab({
                     </div>
 
                     <h3 className="break-words text-[22px] font-semibold leading-tight text-slate-900">
-                      {viewTarget.item_label ||
-                        viewTarget.patient?.full_name ||
-                        viewTarget.patient_name ||
-                        `Item #${viewTarget.item_id ?? viewTarget.id}`}
+                      {getArchiveLabel(viewTarget)}
                     </h3>
 
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -598,10 +640,10 @@ export default function ArchiveTab({
               <div className="max-h-[65vh] overflow-y-auto px-6 py-6 space-y-4">
                 <InfoBlock label="Type" value={prettifyType(viewTarget.item_type)} />
 
-                {viewTarget.patient?.full_name || viewTarget.patient_name ? (
+                {getArchivePatientName(viewTarget) ? (
                   <InfoBlock
                     label="Patient"
-                    value={viewTarget.patient?.full_name || viewTarget.patient_name || "—"}
+                    value={getArchivePatientName(viewTarget) || "—"}
                   />
                 ) : null}
 
@@ -678,10 +720,7 @@ export default function ArchiveTab({
                     Selected item
                   </p>
                   <p className="mt-1 break-words text-sm font-semibold text-slate-900">
-                    {restoreTarget.item_label ||
-                      restoreTarget.patient?.full_name ||
-                      restoreTarget.patient_name ||
-                      `Item #${restoreTarget.item_id ?? restoreTarget.id}`}
+                    {getArchiveLabel(restoreTarget)}
                   </p>
                   <p className="mt-2 text-sm text-slate-600">
                     Type: {prettifyType(restoreTarget.item_type)}
@@ -743,10 +782,7 @@ export default function ArchiveTab({
                     Archive entry to delete
                   </p>
                   <p className="mt-1 break-words text-sm font-semibold text-slate-900">
-                    {deleteTarget.item_label ||
-                      deleteTarget.patient?.full_name ||
-                      deleteTarget.patient_name ||
-                      `Item #${deleteTarget.item_id ?? deleteTarget.id}`}
+                    {getArchiveLabel(deleteTarget)}
                   </p>
                   <p className="mt-2 text-sm text-slate-600">
                     Type: {prettifyType(deleteTarget.item_type)}

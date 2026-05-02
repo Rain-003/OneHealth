@@ -9,9 +9,12 @@ use App\Models\Appointment;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use App\Models\Activity;
+use App\Http\Controllers\Prenatal\Concerns\ResolvesPregnancy;
 
 class HbmAfterController extends Controller
 {
+    use ResolvesPregnancy;
+
     /**
      * Allow standard resource routes to call the same logic.
      * Route model binding should still inject PatientsModel $patient.
@@ -26,24 +29,32 @@ class HbmAfterController extends Controller
      */
     private function yn($v): ?string
     {
-        if ($v === 'oo') return 'oo';
-        if ($v === 'hindi') return 'hindi';
-        if ($v === true || $v === 1 || $v === '1' || $v === 'true' || $v === 'yes') return 'oo';
-        if ($v === false || $v === 0 || $v === '0' || $v === 'false' || $v === 'no') return 'hindi';
+        if ($v === 'oo')
+            return 'oo';
+        if ($v === 'hindi')
+            return 'hindi';
+        if ($v === true || $v === 1 || $v === '1' || $v === 'true' || $v === 'yes')
+            return 'oo';
+        if ($v === false || $v === 0 || $v === '0' || $v === 'false' || $v === 'no')
+            return 'hindi';
         return null;
     }
 
     private function boolOrNull($v): ?bool
     {
-        if ($v === null || $v === '') return null;
-        if ($v === true || $v === 1 || $v === '1' || $v === 'true' || $v === 'yes' || $v === 'oo') return true;
-        if ($v === false || $v === 0 || $v === '0' || $v === 'false' || $v === 'no' || $v === 'hindi') return false;
+        if ($v === null || $v === '')
+            return null;
+        if ($v === true || $v === 1 || $v === '1' || $v === 'true' || $v === 'yes' || $v === 'oo')
+            return true;
+        if ($v === false || $v === 0 || $v === '0' || $v === 'false' || $v === 'no' || $v === 'hindi')
+            return false;
         return null;
     }
 
     private function ymdOrNull($v): ?string
     {
-        if ($v === null || $v === '') return null;
+        if ($v === null || $v === '')
+            return null;
         try {
             return Carbon::parse($v)->format('Y-m-d');
         } catch (\Throwable $e) {
@@ -53,8 +64,10 @@ class HbmAfterController extends Controller
 
     private function intOrNull($v): ?int
     {
-        if ($v === null || $v === '') return null;
-        if (!is_numeric($v)) return null;
+        if ($v === null || $v === '')
+            return null;
+        if (!is_numeric($v))
+            return null;
         return (int) $v;
     }
 
@@ -67,11 +80,21 @@ class HbmAfterController extends Controller
         if (!$user) {
             abort(403);
         }
-        if ($user->role !== 'admin' && (int) $patient->owner_id !== (int) $user->id) {
+        $sameAssignedBarangay =
+            trim(mb_strtolower((string) $patient->assigned_barangay)) !== '' &&
+            trim(mb_strtolower((string) $patient->assigned_barangay)) === trim(mb_strtolower((string) $user->barangay));
+
+        if (
+            $user->role !== 'admin' &&
+            (int) $patient->owner_id !== (int) $user->id &&
+            !$sameAssignedBarangay
+        ) {
             abort(403, 'View only.');
         }
 
-        $mode    = (string) $request->input('mode', '');
+        $pregnancy = $this->activePregnancyFor($patient);
+
+        $mode = (string) $request->input('mode', '');
         $isDraft = in_array($mode, ['draft', 'autosave'], true) || $request->boolean('autosave');
 
         // Accept {after:{...}} or flat payload
@@ -100,8 +123,14 @@ class HbmAfterController extends Controller
             $incoming['visits'] = $incoming['after_cols'];
         }
 
-        // Existing JSON snapshot (for merging / defaults)
+        // Existing JSON snapshot (for merging / defaults).
+        // If the saved snapshot belongs to a different pregnancy, start clean so
+        // a new pregnancy does not show the previous pregnancy's after-birth data.
         $existing = (array) ($patient->prenatal_hbm_after ?? []);
+        if (($existing['_pregnancy_id'] ?? null) && (int) $existing['_pregnancy_id'] !== (int) $pregnancy->id) {
+            $existing = [];
+        }
+        $existing['_pregnancy_id'] = (int) $pregnancy->id;
 
         /* --------------------------------------------------------------------
          | 1) SNAPSHOT FOR UI (kept in prenatal_hbm_after JSON)
@@ -139,7 +168,7 @@ class HbmAfterController extends Controller
         }
 
         if ($snapshotVisits) {
-            $existing['visits']     = $snapshotVisits; // preferred key for React
+            $existing['visits'] = $snapshotVisits; // preferred key for React
             $existing['after_cols'] = $snapshotVisits; // legacy readers still work
         }
 
@@ -153,7 +182,7 @@ class HbmAfterController extends Controller
             $supp = (array) $incoming['supplements'];
         }
 
-        $vitA  = $supp['vitamin_a_date']
+        $vitA = $supp['vitamin_a_date']
             ?? ($incoming['vitamin_a_date'] ?? ($existing['vitamin_a_date'] ?? null));
         $ironD = $supp['iron_folate_date']
             ?? ($incoming['iron_folate_date'] ?? ($existing['iron_folate_date'] ?? null));
@@ -164,17 +193,17 @@ class HbmAfterController extends Controller
                 ?? ($existing['iron_folate_count'] ?? null));
 
         $existing['supplements'] = [
-            'vitamin_a_date'    => $this->ymdOrNull($vitA),
-            'iron_folate_date'  => $this->ymdOrNull($ironD),
+            'vitamin_a_date' => $this->ymdOrNull($vitA),
+            'iron_folate_date' => $this->ymdOrNull($ironD),
             'iron_folate_count' => $this->intOrNull($ironC),
-            'iron_folate_qty'   => $this->intOrNull($ironC),
+            'iron_folate_qty' => $this->intOrNull($ironC),
         ];
 
         // Flat aliases for older readers
-        $existing['vitamin_a_date']    = $existing['supplements']['vitamin_a_date'];
-        $existing['iron_folate_date']  = $existing['supplements']['iron_folate_date'];
+        $existing['vitamin_a_date'] = $existing['supplements']['vitamin_a_date'];
+        $existing['iron_folate_date'] = $existing['supplements']['iron_folate_date'];
         $existing['iron_folate_count'] = $existing['supplements']['iron_folate_count'];
-        $existing['iron_folate_qty']   = $existing['supplements']['iron_folate_qty'];
+        $existing['iron_folate_qty'] = $existing['supplements']['iron_folate_qty'];
 
         // Keep any explicit top-level values from payload (for safety/backwards compat)
         foreach (['vitamin_a_date', 'iron_folate_date', 'iron_folate_count', 'iron_folate_qty'] as $t) {
@@ -190,8 +219,8 @@ class HbmAfterController extends Controller
             $r = (array) $incoming['referral'];
 
             $existing['referral'] = [
-                'referred'    => (bool) ($r['referred'] ?? false),
-                'reason'      => (string) ($r['reason'] ?? ''),
+                'referred' => (bool) ($r['referred'] ?? false),
+                'reason' => (string) ($r['reason'] ?? ''),
                 'institution' => (string) ($r['institution'] ?? ''),
             ];
         }
@@ -204,10 +233,10 @@ class HbmAfterController extends Controller
 
             $existing['fp'] = [
                 'followup_date' => $this->ymdOrNull($fp['followup_date'] ?? null),
-                'consult_date'  => $this->ymdOrNull($fp['consult_date'] ?? null),
-                'method'        => $fp['method'] ?? null,
-                'given_qty'     => $this->intOrNull($fp['given_qty'] ?? null),
-                'notes'         => (string) ($fp['notes'] ?? ''),
+                'consult_date' => $this->ymdOrNull($fp['consult_date'] ?? null),
+                'method' => $fp['method'] ?? null,
+                'given_qty' => $this->intOrNull($fp['given_qty'] ?? null),
+                'notes' => (string) ($fp['notes'] ?? ''),
             ];
         }
 
@@ -220,14 +249,14 @@ class HbmAfterController extends Controller
 
             $existing['delivery'] = [
                 'immediate_breastfeeding' => $this->boolOrNull($d['immediate_breastfeeding'] ?? null),
-                'delivery_mode'           => $d['delivery_mode'] ?? null,
-                'delivery_date'           => $this->ymdOrNull($d['delivery_date'] ?? null),
-                'delivery_place'          => $d['delivery_place'] ?? null,
-                'attended_by'             => $d['attended_by'] ?? null,
-                'birth_weight_g'          => $this->intOrNull($d['birth_weight_g'] ?? null),
-                'pph_over_500cc'          => $this->boolOrNull($d['pph_over_500cc'] ?? null),
-                'baby_alive'              => $this->boolOrNull($d['baby_alive'] ?? null),
-                'baby_healthy'            => $this->boolOrNull($d['baby_healthy'] ?? null),
+                'delivery_mode' => $d['delivery_mode'] ?? null,
+                'delivery_date' => $this->ymdOrNull($d['delivery_date'] ?? null),
+                'delivery_place' => $d['delivery_place'] ?? null,
+                'attended_by' => $d['attended_by'] ?? null,
+                'birth_weight_g' => $this->intOrNull($d['birth_weight_g'] ?? null),
+                'pph_over_500cc' => $this->boolOrNull($d['pph_over_500cc'] ?? null),
+                'baby_alive' => $this->boolOrNull($d['baby_alive'] ?? null),
+                'baby_healthy' => $this->boolOrNull($d['baby_healthy'] ?? null),
             ];
         }
 
@@ -243,8 +272,8 @@ class HbmAfterController extends Controller
          | 2) NORMALIZE INTO TABLES (PostnatalRecord + Appointments)
          |    This is the only place where 'oo'/'hindi' coercions happen.
          * ------------------------------------------------------------------- */
-        $normalizedVisits  = $snapshotVisits;
-        $keepIds           = [];
+        $normalizedVisits = $snapshotVisits;
+        $keepIds = [];
         $keepFollowupDates = [];
 
         if (!empty($normalizedVisits)) {
@@ -271,7 +300,8 @@ class HbmAfterController extends Controller
                 $keepFollowupDates[] = $date;
 
                 $model = PostnatalRecord::firstOrNew([
-                    'patient_id'    => $patient->id,
+                    'patient_id' => $patient->id,
+                    'pregnancy_id' => $pregnancy->id,
                     'followup_date' => $date,
                 ]);
 
@@ -280,32 +310,33 @@ class HbmAfterController extends Controller
                 $iron = $this->ymdOrNull($row['iron_folate_date'] ?? ($existing['iron_folate_date'] ?? null));
 
                 $model->fill([
-                    'patient_id'    => $patient->id,
+                    'patient_id' => $patient->id,
+                    'pregnancy_id' => $pregnancy->id,
                     'followup_date' => $date,
 
                     // Coerce to 'oo'/'hindi' for normalized table columns
                     'exclusive_breastfeeding' => $this->yn($row['exclusive_breastfeeding'] ?? null),
-                    'family_planning_intent'  => $this->yn($row['family_planning_intent'] ?? null),
-                    'fever_38_up'             => $this->yn($row['fever_38_up'] ?? null),
-                    'foul_lochia'             => $this->yn($row['foul_lochia'] ?? null),
-                    'heavy_bleeding'          => $this->yn($row['heavy_bleeding'] ?? null),
-                    'red_breast'              => $this->yn($row['red_breast'] ?? null),
+                    'family_planning_intent' => $this->yn($row['family_planning_intent'] ?? null),
+                    'fever_38_up' => $this->yn($row['fever_38_up'] ?? null),
+                    'foul_lochia' => $this->yn($row['foul_lochia'] ?? null),
+                    'heavy_bleeding' => $this->yn($row['heavy_bleeding'] ?? null),
+                    'red_breast' => $this->yn($row['red_breast'] ?? null),
 
-                    'bp'                      => $row['bp'] ?? null,
-                    'wt'                      => isset($row['wt']) && $row['wt'] !== '' ? (string) $row['wt'] : null,
-                    'temp'                    => isset($row['temp']) && $row['temp'] !== '' ? (string) $row['temp'] : null,
+                    'bp' => $row['bp'] ?? null,
+                    'wt' => isset($row['wt']) && $row['wt'] !== '' ? (string) $row['wt'] : null,
+                    'temp' => isset($row['temp']) && $row['temp'] !== '' ? (string) $row['temp'] : null,
 
-                    'navel_ok'                => $this->yn($row['navel_ok'] ?? null),
-                    'remarks'                 => $row['remarks'] ?? null,
-                    'vitamin_a_date'          => $vitA,
-                    'iron_folate_date'        => $iron,
+                    'navel_ok' => $this->yn($row['navel_ok'] ?? null),
+                    'remarks' => $row['remarks'] ?? null,
+                    'vitamin_a_date' => $vitA,
+                    'iron_folate_date' => $iron,
 
                     // Co-morbidities
-                    'tb'            => $this->yn($row['tb'] ?? null),
+                    'tb' => $this->yn($row['tb'] ?? null),
                     'heart_disease' => $this->yn($row['heart_disease'] ?? null),
-                    'diabetes'      => $this->yn($row['diabetes'] ?? null),
-                    'asthma'        => $this->yn($row['asthma'] ?? null),
-                    'goiter'        => $this->yn($row['goiter'] ?? null),
+                    'diabetes' => $this->yn($row['diabetes'] ?? null),
+                    'asthma' => $this->yn($row['asthma'] ?? null),
+                    'goiter' => $this->yn($row['goiter'] ?? null),
                 ]);
 
                 $model->save();
@@ -318,12 +349,12 @@ class HbmAfterController extends Controller
                 // Main follow-up appointment
                 Appointment::updateOrCreate(
                     [
-                        'patient_id'  => $patient->id,
+                        'patient_id' => $patient->id,
                         'source_type' => 'postnatal_followup',
-                        'source_id'   => (int) $model->id,
+                        'source_id' => (int) $model->id,
                     ],
                     [
-                        'date'  => $model->followup_date,
+                        'date' => $model->followup_date,
                         'title' => 'Postnatal Follow-up',
                         'notes' => $model->remarks ?? null,
                     ]
@@ -333,12 +364,12 @@ class HbmAfterController extends Controller
                 if (!empty($vitA)) {
                     Appointment::updateOrCreate(
                         [
-                            'patient_id'  => $patient->id,
+                            'patient_id' => $patient->id,
                             'source_type' => 'postnatal_vitamin_a',
-                            'source_id'   => (int) $model->id,
+                            'source_id' => (int) $model->id,
                         ],
                         [
-                            'date'  => $vitA,
+                            'date' => $vitA,
                             'title' => 'Postnatal: Vitamin A',
                             'notes' => null,
                         ]
@@ -354,12 +385,12 @@ class HbmAfterController extends Controller
                 if (!empty($iron)) {
                     Appointment::updateOrCreate(
                         [
-                            'patient_id'  => $patient->id,
+                            'patient_id' => $patient->id,
                             'source_type' => 'postnatal_iron_folate',
-                            'source_id'   => (int) $model->id,
+                            'source_id' => (int) $model->id,
                         ],
                         [
-                            'date'  => $iron,
+                            'date' => $iron,
                             'title' => 'Postnatal: Iron/Folate',
                             'notes' => null,
                         ]
@@ -375,38 +406,70 @@ class HbmAfterController extends Controller
             // Remove normalized rows not in payload (by followup_date)
             $keepFollowupDates = array_values(array_unique(array_filter($keepFollowupDates)));
             if (!empty($keepFollowupDates)) {
-                PostnatalRecord::where('patient_id', $patient->id)
+                $removedIds = PostnatalRecord::where('patient_id', $patient->id)
+                    ->where('pregnancy_id', $pregnancy->id)
                     ->whereNotIn('followup_date', $keepFollowupDates)
-                    ->delete();
+                    ->pluck('id');
+
+                if ($removedIds->isNotEmpty()) {
+                    Appointment::where('patient_id', $patient->id)
+                        ->whereIn('source_type', [
+                            'postnatal_followup',
+                            'postnatal_vitamin_a',
+                            'postnatal_iron_folate',
+                        ])
+                        ->whereIn('source_id', $removedIds)
+                        ->delete();
+
+                    PostnatalRecord::whereIn('id', $removedIds)->delete();
+                }
             }
 
             // Cleanup orphaned appointments
             if (!empty($keepIds)) {
+                $activePostnatalIds = PostnatalRecord::where('patient_id', $patient->id)
+                    ->where('pregnancy_id', $pregnancy->id)
+                    ->pluck('id');
+
+                if ($activePostnatalIds->isNotEmpty()) {
+                    Appointment::where('patient_id', $patient->id)
+                        ->whereIn('source_type', [
+                            'postnatal_followup',
+                            'postnatal_vitamin_a',
+                            'postnatal_iron_folate',
+                        ])
+                        ->whereIn('source_id', $activePostnatalIds)
+                        ->whereNotIn('source_id', $keepIds)
+                        ->delete();
+                }
+            }
+        } else {
+            $activePostnatalIds = PostnatalRecord::where('patient_id', $patient->id)
+                ->where('pregnancy_id', $pregnancy->id)
+                ->pluck('id');
+
+            if ($activePostnatalIds->isNotEmpty()) {
                 Appointment::where('patient_id', $patient->id)
                     ->whereIn('source_type', [
                         'postnatal_followup',
                         'postnatal_vitamin_a',
                         'postnatal_iron_folate',
                     ])
-                    ->whereNotIn('source_id', $keepIds)
+                    ->whereIn('source_id', $activePostnatalIds)
                     ->delete();
             }
-        } else {
-            PostnatalRecord::where('patient_id', $patient->id)->delete();
 
-            Appointment::where('patient_id', $patient->id)
-                ->whereIn('source_type', [
-                    'postnatal_followup',
-                    'postnatal_vitamin_a',
-                    'postnatal_iron_folate',
-                ])
+            PostnatalRecord::where('patient_id', $patient->id)
+                ->where('pregnancy_id', $pregnancy->id)
                 ->delete();
         }
 
         Activity::record('postnatal.updated', [
-            'patient_id'  => $patient->id,
+            'patient_id' => $patient->id,
             'description' => 'Updated postnatal record',
-            'properties'  => [
+            'properties' => [
+                'pregnancy_id' => $pregnancy->id,
+                'pregnancy_no' => $pregnancy->pregnancy_no,
                 'visits' => is_array($existing['visits'] ?? null) ? count($existing['visits']) : 0,
                 'has_delivery' => !empty($existing['delivery']),
                 'delivery_date' => data_get($existing, 'delivery.delivery_date'),

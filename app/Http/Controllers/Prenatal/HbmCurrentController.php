@@ -10,9 +10,12 @@ use Illuminate\Http\Request;
 use Carbon\Carbon;
 use App\Enums\YesNo;
 use App\Models\Activity;
+use App\Http\Controllers\Prenatal\Concerns\ResolvesPregnancy;
 
 class HbmCurrentController extends Controller
 {
+    use ResolvesPregnancy;
+
     /**
      * ✅ If patient is currently TRANSFERRED, flip back to ACTIVE when a real save happens.
      * (draft/autosave should NOT reactivate)
@@ -20,17 +23,18 @@ class HbmCurrentController extends Controller
     private function reactivateIfTransferred(PatientsModel $patient, string $source): void
     {
         $cur = strtolower((string) ($patient->status ?? ''));
-        if ($cur !== 'transferred') return;
+        if ($cur !== 'transferred')
+            return;
 
         $patient->status = 'active';
         $patient->save();
 
         Activity::record('patient.reactivated', [
-            'patient_id'  => $patient->id,
+            'patient_id' => $patient->id,
             'description' => 'Patient status set back to active after saving a record.',
-            'properties'  => [
-                'from'   => 'transferred',
-                'to'     => 'active',
+            'properties' => [
+                'from' => 'transferred',
+                'to' => 'active',
                 'source' => $source,
             ],
         ]);
@@ -44,7 +48,8 @@ class HbmCurrentController extends Controller
      */
     private function encodeMeta(array $meta): ?string
     {
-        if (empty($meta)) return null;
+        if (empty($meta))
+            return null;
         try {
             return json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         } catch (\Throwable $e) {
@@ -54,7 +59,8 @@ class HbmCurrentController extends Controller
 
     private function parseYmd($date): ?string
     {
-        if (empty($date)) return null;
+        if (empty($date))
+            return null;
         try {
             return Carbon::parse($date)->format('Y-m-d');
         } catch (\Throwable $e) {
@@ -71,8 +77,10 @@ class HbmCurrentController extends Controller
     private function intervalWeeksForGa(?int $gaWeeks): int
     {
         $gaWeeks = $gaWeeks ?? 0;
-        if ($gaWeeks >= 36) return 1;
-        if ($gaWeeks >= 28) return 2;
+        if ($gaWeeks >= 36)
+            return 1;
+        if ($gaWeeks >= 28)
+            return 2;
         return 4;
     }
 
@@ -83,7 +91,7 @@ class HbmCurrentController extends Controller
     private function computeAutoNextVisit(string $baseVisitYmd, ?int $gaWeeks): array
     {
         $today = Carbon::today()->startOfDay();
-        $base  = Carbon::parse($baseVisitYmd)->startOfDay();
+        $base = Carbon::parse($baseVisitYmd)->startOfDay();
 
         $intervalWeeks = $this->intervalWeeksForGa($gaWeeks);
         $next = $base->copy()->addWeeks($intervalWeeks);
@@ -105,30 +113,54 @@ class HbmCurrentController extends Controller
     public function save(Request $request, PatientsModel $patient)
     {
         $user = $request->user();
-        if (!$user) { abort(403); }
-        if ($user->role !== 'admin' && (int) $patient->owner_id !== (int) $user->id) {
+        if (!$user) {
+            abort(403);
+        }
+        $sameAssignedBarangay =
+            trim(mb_strtolower((string) $patient->assigned_barangay)) !== '' &&
+            trim(mb_strtolower((string) $patient->assigned_barangay)) === trim(mb_strtolower((string) $user->barangay));
+
+        if (
+            $user->role !== 'admin' &&
+            (int) $patient->owner_id !== (int) $user->id &&
+            !$sameAssignedBarangay
+        ) {
             abort(403, 'View only.');
         }
 
-        $mode    = (string) $request->input('mode', '');
-        $isDraft = in_array($mode, ['draft','autosave'], true) || $request->boolean('autosave');
+        $pregnancy = $this->activePregnancyFor($patient);
+
+        $mode = (string) $request->input('mode', '');
+        $isDraft = in_array($mode, ['draft', 'autosave'], true) || $request->boolean('autosave');
 
         $incoming = $request->input('current');
         if (!is_array($incoming)) {
-            $incoming = $request->only(['rows','visits','lmp_date','edd_date','pregnancy_number','delivery']);
-            if (empty($incoming)) $incoming = $request->except(['_token','mode','autosave']);
+            $incoming = $request->only(['rows', 'visits', 'lmp_date', 'edd_date', 'pregnancy_number', 'delivery']);
+            if (empty($incoming))
+                $incoming = $request->except(['_token', 'mode', 'autosave']);
         }
 
         $existing = (array) ($patient->prenatal_hbm_current ?? []);
+
+        // Keep the legacy JSON snapshot safe per pregnancy.
+        // The column still lives on the patient, so reset it when a different pregnancy is active.
+        $snapshotPregnancyId = isset($existing['__pregnancy_id']) ? (int) $existing['__pregnancy_id'] : null;
+        if ($snapshotPregnancyId && $snapshotPregnancyId !== (int) $pregnancy->id) {
+            $existing = [];
+        }
+
+        $existing['__pregnancy_id'] = (int) $pregnancy->id;
+        $existing['pregnancy_id'] = (int) $pregnancy->id;
+        $existing['pregnancy_no'] = (int) ($pregnancy->pregnancy_no ?? 1);
 
         /* ----------------------- keep JSON snapshot for UI ----------------------- */
         if (isset($incoming['rows']) && is_array($incoming['rows'])) {
             $rows = (array) ($existing['rows'] ?? []);
             foreach ($incoming['rows'] as $k => $v) {
-                $key  = (string) $k;
+                $key = (string) $k;
                 $prev = (array) ($rows[$key] ?? []);
                 $next = array_replace_recursive($prev, (array) $v);
-                $next['month_index']  = (int) ($next['month_index']  ?? $key);
+                $next['month_index'] = (int) ($next['month_index'] ?? $key);
                 $next['column_index'] = (int) ($next['column_index'] ?? $key);
                 $rows[$key] = $next;
             }
@@ -139,8 +171,9 @@ class HbmCurrentController extends Controller
             $existing['visits'] = array_values($incoming['visits']);
         }
 
-        foreach (['lmp_date','edd_date','pregnancy_number'] as $t) {
-            if (array_key_exists($t, $incoming)) $existing[$t] = $incoming[$t];
+        foreach (['lmp_date', 'edd_date', 'pregnancy_number'] as $t) {
+            if (array_key_exists($t, $incoming))
+                $existing[$t] = $incoming[$t];
         }
 
         if (array_key_exists('delivery', $incoming) && is_array($incoming['delivery'])) {
@@ -152,17 +185,29 @@ class HbmCurrentController extends Controller
 
         // Coerce booleans for the snapshot
         $boolFields = [
-            'bleeding','uti','fever_38_or_more','pallor_anemia','abnormal_abdominal_size',
-            'abnormal_presentation','absent_fetal_heartbeat','edema','vaginal_infection',
-            'iodine_risk_area','malaria_prophylaxis','plan_breastfeed','counseled_danger_signs',
-            'birth_plan_prepared','danger_present',
+            'bleeding',
+            'uti',
+            'fever_38_or_more',
+            'pallor_anemia',
+            'abnormal_abdominal_size',
+            'abnormal_presentation',
+            'absent_fetal_heartbeat',
+            'edema',
+            'vaginal_infection',
+            'iodine_risk_area',
+            'malaria_prophylaxis',
+            'plan_breastfeed',
+            'counseled_danger_signs',
+            'birth_plan_prepared',
+            'danger_present',
         ];
         $toBool = fn($v) => filter_var($v, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
 
         if (!empty($existing['rows']) && is_array($existing['rows'])) {
             foreach ($existing['rows'] as $k => $row) {
                 foreach ($boolFields as $f) {
-                    if (array_key_exists($f, $row)) $row[$f] = $toBool($row[$f]);
+                    if (array_key_exists($f, $row))
+                        $row[$f] = $toBool($row[$f]);
                 }
                 $existing['rows'][$k] = $row;
             }
@@ -171,18 +216,39 @@ class HbmCurrentController extends Controller
         if (!empty($existing['visits']) && is_array($existing['visits'])) {
             foreach ($existing['visits'] as $i => $row) {
                 foreach ($boolFields as $f) {
-                    if (array_key_exists($f, $row)) $row[$f] = $toBool($row[$f]);
+                    if (array_key_exists($f, $row))
+                        $row[$f] = $toBool($row[$f]);
                 }
                 $existing['visits'][$i] = $row;
             }
         }
 
         if (!empty($existing['delivery']) && is_array($existing['delivery'])) {
-            foreach (['immediate_breastfeeding','pph_over_500cc','baby_alive','baby_healthy'] as $f) {
+            foreach (['immediate_breastfeeding', 'pph_over_500cc', 'baby_alive', 'baby_healthy'] as $f) {
                 if (array_key_exists($f, $existing['delivery'])) {
                     $existing['delivery'][$f] = $toBool($existing['delivery'][$f]);
                 }
             }
+        }
+
+        // Keep the pregnancy master record aligned when the HBM current form sends LMP/EDD.
+        $pregnancyDirty = false;
+        if (!empty($existing['lmp_date'])) {
+            $lmp = $this->parseYmd($existing['lmp_date']);
+            if ($lmp && optional($pregnancy->lmp)->format('Y-m-d') !== $lmp) {
+                $pregnancy->lmp = $lmp;
+                $pregnancyDirty = true;
+            }
+        }
+        if (!empty($existing['edd_date'])) {
+            $edd = $this->parseYmd($existing['edd_date']);
+            if ($edd && optional($pregnancy->edd)->format('Y-m-d') !== $edd) {
+                $pregnancy->edd = $edd;
+                $pregnancyDirty = true;
+            }
+        }
+        if ($pregnancyDirty) {
+            $pregnancy->save();
         }
 
         // Always persist the JSON snapshot so the UI never loses edits
@@ -202,12 +268,12 @@ class HbmCurrentController extends Controller
         }
 
         /* ----------------------- normalize into DB table (COMMIT) ------------------------ */
-        $keepDates   = [];
-        $keepRowIds  = [];
+        $keepDates = [];
+        $keepRowIds = [];
 
         // Track most recent visit for auto scheduling fallback
         $latestVisitYmd = null;
-        $latestGaWeeks  = null;
+        $latestGaWeeks = null;
 
         // Track earliest future manual "next visit" (we will keep only one for simplicity)
         $earliestFutureManualNext = null;
@@ -222,46 +288,50 @@ class HbmCurrentController extends Controller
                 $visitDateYmd = $this->parseYmd($row['visit_date'] ?? null);
                 $nextVisitYmd = $this->parseYmd($row['next_visit_date'] ?? null);
 
-                if (!$visitDateYmd) continue;
+                if (!$visitDateYmd)
+                    continue;
                 $keepDates[] = $visitDateYmd;
 
                 $model = CurrentPregnancy::firstOrNew([
                     'patient_id' => $patient->id,
+                    'pregnancy_id' => $pregnancy->id,
                     'visit_date' => $visitDateYmd,
                 ]);
 
                 $model->fill([
-                    'patient_id'        => $patient->id,
-                    'visit_date'        => $visitDateYmd,
-                    'age_of_pregnancy'  => $row['gestational_weeks'] ?? null,
-                    'bp'                => $row['bp'] ?? null,
-                    'weight_kg'         => $row['weight_kg'] ?? null,
-                    'fundic_height'     => $row['fundal_height_cm'] ?? null,
-                    'fetal_heart_tone'  => $row['fetal_heart_tone'] ?? null,
-                    'laboratory_results'=> $row['laboratory_results'] ?? null,
-                    'iron_folate_rx'    => $row['iron_folate_rx'] ?? null,
-                    'next_visit_date'   => $nextVisitYmd,
+                    'patient_id' => $patient->id,
+                    'pregnancy_id' => $pregnancy->id,
+                    'visit_date' => $visitDateYmd,
+                    'age_of_pregnancy' => $row['gestational_weeks'] ?? null,
+                    'bp' => $row['bp'] ?? null,
+                    'weight_kg' => $row['weight_kg'] ?? null,
+                    'fundic_height' => $row['fundal_height_cm'] ?? null,
+                    'fetal_heart_tone' => $row['fetal_heart_tone'] ?? null,
+                    'laboratory_results' => $row['laboratory_results'] ?? null,
+                    'iron_folate_rx' => $row['iron_folate_rx'] ?? null,
+                    'next_visit_date' => $nextVisitYmd,
                 ]);
 
-                $model->bleeding                = YesNo::fromLoose($row['vaginal_bleeding']          ?? null);
-                $model->uti                     = YesNo::fromLoose($row['urine_infection']           ?? null);
-                $model->fever_38_or_more        = YesNo::fromLoose($row['fever_38_or_more']          ?? null);
-                $model->pallor_anemia           = YesNo::fromLoose($row['pallor_anemia']             ?? null);
-                $model->abnormal_abdominal_size = YesNo::fromLoose($row['abnormal_abdominal_size']   ?? null);
-                $model->abnormal_presentation   = YesNo::fromLoose($row['abnormal_presentation']     ?? null);
-                $model->absent_fetal_heartbeat  = YesNo::fromLoose($row['absent_fetal_heartbeat']    ?? null);
-                $model->edema                   = YesNo::fromLoose($row['edema']                     ?? null);
-                $model->vaginal_infection       = YesNo::fromLoose($row['vaginal_infection']         ?? null);
-                $model->iodine_risk_area        = YesNo::fromLoose($row['iodine_risk_area']          ?? null);
-                $model->malaria_prophylaxis     = YesNo::fromLoose($row['malaria_prophylaxis']       ?? null);
-                $model->plan_breastfeed         = YesNo::fromLoose($row['plan_breastfeed']           ?? null);
-                $model->counseled_danger_signs  = YesNo::fromLoose($row['counseled_danger_signs']    ?? null);
-                $model->dental_check            = YesNo::fromLoose($row['dental_check']              ?? null);
-                $model->birth_plan_prepared     = YesNo::fromLoose($row['birth_plan_prepared']       ?? null);
-                $model->danger_present          = YesNo::fromLoose($row['danger_present']            ?? null);
+                $model->bleeding = YesNo::fromLoose($row['vaginal_bleeding'] ?? null);
+                $model->uti = YesNo::fromLoose($row['urine_infection'] ?? null);
+                $model->fever_38_or_more = YesNo::fromLoose($row['fever_38_or_more'] ?? null);
+                $model->pallor_anemia = YesNo::fromLoose($row['pallor_anemia'] ?? null);
+                $model->abnormal_abdominal_size = YesNo::fromLoose($row['abnormal_abdominal_size'] ?? null);
+                $model->abnormal_presentation = YesNo::fromLoose($row['abnormal_presentation'] ?? null);
+                $model->absent_fetal_heartbeat = YesNo::fromLoose($row['absent_fetal_heartbeat'] ?? null);
+                $model->edema = YesNo::fromLoose($row['edema'] ?? null);
+                $model->vaginal_infection = YesNo::fromLoose($row['vaginal_infection'] ?? null);
+                $model->iodine_risk_area = YesNo::fromLoose($row['iodine_risk_area'] ?? null);
+                $model->malaria_prophylaxis = YesNo::fromLoose($row['malaria_prophylaxis'] ?? null);
+                $model->plan_breastfeed = YesNo::fromLoose($row['plan_breastfeed'] ?? null);
+                $model->counseled_danger_signs = YesNo::fromLoose($row['counseled_danger_signs'] ?? null);
+                $model->dental_check = YesNo::fromLoose($row['dental_check'] ?? null);
+                $model->birth_plan_prepared = YesNo::fromLoose($row['birth_plan_prepared'] ?? null);
+                $model->danger_present = YesNo::fromLoose($row['danger_present'] ?? null);
 
-                foreach (['hr','rr','temp','remarks'] as $opt) {
-                    if (array_key_exists($opt, $row)) $model->{$opt} = $row[$opt];
+                foreach (['hr', 'rr', 'temp', 'remarks'] as $opt) {
+                    if (array_key_exists($opt, $row))
+                        $model->{$opt} = $row[$opt];
                 }
 
                 $model->save();
@@ -278,27 +348,28 @@ class HbmCurrentController extends Controller
                 // Track latest visit
                 if ($latestVisitYmd === null || $visitDateYmd > $latestVisitYmd) {
                     $latestVisitYmd = $visitDateYmd;
-                    $latestGaWeeks  = $gaWeeks;
+                    $latestGaWeeks = $gaWeeks;
                 }
 
                 // ✅ CURRENT visit appointment (done log)
                 Appointment::updateOrCreate(
                     [
-                        'patient_id'  => $patient->id,
+                        'patient_id' => $patient->id,
                         'source_type' => 'prenatal_current_visit',
-                        'source_id'   => (int) $model->id,
+                        'source_id' => (int) $model->id,
                     ],
                     [
-                        'date'  => $visitDateYmd,
+                        'date' => $visitDateYmd,
                         'title' => 'Prenatal Checkup',
                         'notes' => $this->encodeMeta([
-                            'program'      => 'prenatal',
-                            'kind'         => 'current_visit',
-                            'visit_date'   => $visitDateYmd,
-                            'ga_weeks'     => $gaWeeks,
-                            'row_id'       => (int) $model->id,
-                            'remarks'      => $model->remarks ?? null,
-                            'danger'       => ($model->danger_present?->value ?? null),
+                            'program' => 'prenatal',
+                            'pregnancy_id' => (int) $pregnancy->id,
+                            'kind' => 'current_visit',
+                            'visit_date' => $visitDateYmd,
+                            'ga_weeks' => $gaWeeks,
+                            'row_id' => (int) $model->id,
+                            'remarks' => $model->remarks ?? null,
+                            'danger' => ($model->danger_present?->value ?? null),
                         ]),
                     ]
                 );
@@ -316,21 +387,22 @@ class HbmCurrentController extends Controller
 
                     Appointment::updateOrCreate(
                         [
-                            'patient_id'  => $patient->id,
+                            'patient_id' => $patient->id,
                             'source_type' => 'prenatal_next_visit',
-                            'source_id'   => (int) $model->id,
+                            'source_id' => (int) $model->id,
                         ],
                         [
-                            'date'  => $nextVisitYmd,
+                            'date' => $nextVisitYmd,
                             'title' => 'Next Prenatal Visit',
                             'notes' => $this->encodeMeta([
-                                'program'         => 'prenatal',
-                                'kind'            => 'next_due_manual',
-                                'recommended'     => false,
+                                'program' => 'prenatal',
+                                'pregnancy_id' => (int) $pregnancy->id,
+                                'kind' => 'next_due_manual',
+                                'recommended' => false,
                                 'next_visit_date' => $nextVisitYmd,
                                 'from_visit_date' => $visitDateYmd,
-                                'ga_weeks'        => $gaWeeks,
-                                'row_id'          => (int) $model->id,
+                                'ga_weeks' => $gaWeeks,
+                                'row_id' => (int) $model->id,
                             ]),
                         ]
                     );
@@ -352,6 +424,7 @@ class HbmCurrentController extends Controller
             $keepDates = array_values(array_unique(array_filter($keepDates)));
             if (!empty($keepDates)) {
                 CurrentPregnancy::where('patient_id', $patient->id)
+                    ->where('pregnancy_id', $pregnancy->id)
                     ->whereNotIn('visit_date', $keepDates)
                     ->delete();
             }
@@ -359,7 +432,7 @@ class HbmCurrentController extends Controller
             // Cleanup orphan appointments for removed rows
             if (!empty($keepRowIds)) {
                 Appointment::where('patient_id', $patient->id)
-                    ->whereIn('source_type', ['prenatal_current_visit','prenatal_next_visit'])
+                    ->whereIn('source_type', ['prenatal_current_visit', 'prenatal_next_visit'])
                     ->whereNotIn('source_id', $keepRowIds)
                     ->delete();
             }
@@ -387,7 +460,7 @@ class HbmCurrentController extends Controller
                     ->where('source_type', 'prenatal_next_visit')
                     ->where(function ($q) use ($earliestFutureManualRowId) {
                         $q->where('source_id', '!=', (int) $earliestFutureManualRowId)
-                          ->orWhereNull('source_id');
+                            ->orWhereNull('source_id');
                     })
                     ->delete();
 
@@ -408,20 +481,21 @@ class HbmCurrentController extends Controller
 
                     Appointment::updateOrCreate(
                         [
-                            'patient_id'  => $patient->id,
+                            'patient_id' => $patient->id,
                             'source_type' => 'prenatal_next_visit',
-                            'source_id'   => (int) $patient->id, // ✅ reserved auto slot
+                            'source_id' => (int) $patient->id, // ✅ reserved auto slot
                         ],
                         [
-                            'date'  => $auto['date'],
+                            'date' => $auto['date'],
                             'title' => 'Next Prenatal Visit',
                             'notes' => $this->encodeMeta([
-                                'program'        => 'prenatal',
-                                'kind'           => $auto['kind'],
-                                'recommended'    => true,
-                                'based_on'       => 'hbm_latest_visit',
-                                'from_visit_date'=> $latestVisitYmd,
-                                'ga_weeks'       => $latestGaWeeks,
+                                'program' => 'prenatal',
+                                'pregnancy_id' => (int) $pregnancy->id,
+                                'kind' => $auto['kind'],
+                                'recommended' => true,
+                                'based_on' => 'hbm_latest_visit',
+                                'from_visit_date' => $latestVisitYmd,
+                                'ga_weeks' => $latestGaWeeks,
                                 'interval_weeks' => $auto['interval_weeks'],
                             ]),
                         ]
@@ -441,13 +515,15 @@ class HbmCurrentController extends Controller
             }
         }
 
-        $rowsCount   = is_array($existing['rows'] ?? null) ? count($existing['rows']) : 0;
+        $rowsCount = is_array($existing['rows'] ?? null) ? count($existing['rows']) : 0;
         $visitsCount = is_array($existing['visits'] ?? null) ? count($existing['visits']) : 0;
 
         Activity::record('prenatal.hbm_current.updated', [
-            'patient_id'  => $patient->id,
+            'patient_id' => $patient->id,
             'description' => 'Updated HBM (current status)',
-            'properties'  => [
+            'properties' => [
+                'pregnancy_id' => (int) $pregnancy->id,
+                'pregnancy_no' => (int) ($pregnancy->pregnancy_no ?? 1),
                 'rows' => $rowsCount,
                 'visits' => $visitsCount,
                 'delivered' => $delivered,

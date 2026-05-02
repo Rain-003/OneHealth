@@ -623,7 +623,7 @@ function SegYN({
   disabled,
 }: {
   value: boolean | null | undefined;
-  onChange: (v: boolean) => void;
+  onChange: (v: boolean | null) => void;
   labels?: { no?: string; yes?: string };
   danger?: boolean;
   disabled?: boolean;
@@ -648,7 +648,7 @@ function SegYN({
       <button
         type="button"
         className={`${base} ${value === false ? activeSafe : idle}`}
-        onClick={() => !disabled && onChange(false)}
+        onClick={() => !disabled && onChange(value === false ? null : false)}
         aria-pressed={value === false}
       >
         {Lno}
@@ -656,7 +656,7 @@ function SegYN({
       <button
         type="button"
         className={`${base} ${value === true ? yesActiveClass : idle}`}
-        onClick={() => !disabled && onChange(true)}
+        onClick={() => !disabled && onChange(value === true ? null : true)}
         aria-pressed={value === true}
       >
         {Lyes}
@@ -1200,17 +1200,18 @@ export default function HBMCurrent({ patient, current, token }: HBMTabProps) {
               <button
                 type="button"
                 onClick={toggleLock}
+                aria-pressed={!locked}
                 className={[
-                  "inline-flex h-9 w-9 items-center justify-center border rounded-md text-xs font-medium transition-colors",
+                  "inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium shadow-sm transition",
+                  "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]",
                   locked
-                    ? "bg-slate-100 border-slate-200 text-slate-600 bg-white shadow-sm"
-                    : "text-white",
+                    ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]"
+                    : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
                 ].join(" ")}
-                style={locked ? undefined : { backgroundColor: TEAL, borderColor: TEAL }}
-                title={locked ? "Locked (Tap to edit)" : "Editing (Tap to lock)"}
-                aria-pressed={locked ? "false" : "true"}
+                title={locked ? "Record is locked" : "Editing enabled"}
               >
                 {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+                <span>{locked ? "Locked" : "Editing"}</span>
               </button>
             </div>
           </div>

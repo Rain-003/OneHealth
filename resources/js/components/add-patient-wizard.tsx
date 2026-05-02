@@ -1,4 +1,4 @@
-// resources/js/components/add-patient-wizard.tsx
+  // resources/js/components/add-patient-wizard.tsx
 import * as React from "react";
 import { useForm, usePage } from "@inertiajs/react";
 import { useConfirm } from "@/components/confirm-kit";
@@ -39,7 +39,9 @@ function getInitialFormData() {
     place_of_birth: "",
     age: "",
     child_height_cm: "",
+    child_height_unit: "CM" as "CM" | "FT",
     birth_weight_kg: "",
+    birth_weight_unit: "KG" as "KG" | "G",
     sex: "",
     cpab: "",
     delivery_type: "",
@@ -55,6 +57,7 @@ function getInitialFormData() {
     family_serial_number: "",
     philhealth_no: "",
     height_cm: "" as string | number,
+    height_unit: "CM" as "CM" | "FT",
     civil_status: "",
 
     // ux
@@ -156,6 +159,20 @@ const HEALTH_CENTER_FACILITIES: readonly string[] = [
   "YAKAL",
 ];
 
+const BARANGAY_TO_HEALTH_CENTER: Record<string, string> = {
+  ACACIA: "ACACIA",
+  "ANAHAW I": "ANAHAW I",
+  "ANAHAW II": "ANAHAW II",
+  BANABA: "BANABA",
+  BULIHAN: "BULIHAN",
+  "IPIL I": "IPIL I",
+  "IPIL II": "IPIL II",
+  "NARRA I": "NARRA I",
+  "NARRA II": "NARRA II",
+  "NARRA III": "NARRA III",
+  YAKAL: "YAKAL",
+};
+
 const PH_CIVIL_STATUSES: readonly string[] = [
   "SINGLE",
   "MARRIED",
@@ -195,6 +212,32 @@ function dateOnly(v?: string | null): string {
   if (/^\d{4}-\d{2}-\d{2}Z$/.test(s)) return s.slice(0, 10);
   if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replaceAll("/", "-");
   return s;
+}
+
+function localTodayDate(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function useLocalTodayDate(): string {
+  const [today, setToday] = React.useState(() => localTodayDate());
+
+  React.useEffect(() => {
+    const refreshToday = () => {
+      const nextToday = localTodayDate();
+      setToday((currentToday) => (currentToday === nextToday ? currentToday : nextToday));
+    };
+
+    refreshToday();
+    const timer = window.setInterval(refreshToday, 60_000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return today;
 }
 
 function trimPhone(v?: string): string {
@@ -254,24 +297,100 @@ function buildAddress(opts: {
   return segments.join(", ");
 }
 
-function calculateAge(birthdate?: string | null): string {
+function calculateAgeParts(birthdate?: string | null): { years: number; months: number } | null {
   const d = dateOnly(birthdate);
-  if (!d) return "";
-  const birth = new Date(d);
-  if (Number.isNaN(birth.getTime())) return "";
+  if (!d) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if (!match) return null;
+
+  const birth = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(birth.getTime())) return null;
 
   const today = new Date();
-  let years = today.getFullYear() - birth.getFullYear();
-  const monthDiff = today.getMonth() - birth.getMonth();
-  const dayDiff = today.getDate() - birth.getDate();
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) years--;
-  return years < 0 ? "" : String(years);
+  if (birth > todayDate) return null;
+
+  let years = todayDate.getFullYear() - birth.getFullYear();
+  let months = todayDate.getMonth() - birth.getMonth();
+
+  if (todayDate.getDate() < birth.getDate()) months--;
+
+  if (months < 0) {
+    years--;
+    months += 12;
+  }
+
+  if (years < 0) return null;
+  return { years, months };
+}
+
+function calculateAgeYears(birthdate?: string | null): number | null {
+  const age = calculateAgeParts(birthdate);
+  return age ? age.years : null;
+}
+
+function calculateAge(birthdate?: string | null): string {
+  const age = calculateAgeParts(birthdate);
+  if (!age) return "";
+
+  const yearText = `${age.years} ${age.years === 1 ? "year" : "years"}`;
+  const monthText = `${age.months} ${age.months === 1 ? "month" : "months"}`;
+
+  return `${yearText} ${monthText}`;
+}
+
+function suggestedHealthCenterForBarangay(barangay?: string | null): string {
+  const normalized = normalizeStringForCompare(barangay);
+  return BARANGAY_TO_HEALTH_CENTER[normalized] || normalized || "";
+}
+
+function parseFlexibleDecimal(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  const cleaned = String(raw).trim().replace(/,/g, ".");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function convertHeightToCm(raw: string | number | null | undefined, unit?: string): number | null {
+  const value = parseFlexibleDecimal(raw);
+  if (value === null) return null;
+  return unit === "FT" ? Number((value * 30.48).toFixed(2)) : Number(value.toFixed(2));
+}
+
+function convertWeightToKg(raw: string | number | null | undefined, unit?: string): number | null {
+  const value = parseFlexibleDecimal(raw);
+  if (value === null) return null;
+  return unit === "G" ? Number((value / 1000).toFixed(3)) : Number(value.toFixed(3));
+}
+
+function clearPatientEntryData(data: ReturnType<typeof getInitialFormData>) {
+  return {
+    ...getInitialFormData(),
+    patient_type: data.patient_type,
+    address_province: "Cavite",
+    address_city: "Silang",
+    barangay: data.barangay,
+    health_center: data.health_center,
+    stay: data.stay,
+  };
 }
 
 function hasMeaningfulDraft(data: ReturnType<typeof getInitialFormData>): boolean {
+  const ignoredKeys = new Set([
+    "stay",
+    "patient_type",
+    "address_province",
+    "address_city",
+    "child_height_unit",
+    "birth_weight_unit",
+    "height_unit",
+  ]);
+
   return Object.entries(data).some(([key, value]) => {
-    if (key === "stay") return false;
+    if (ignoredKeys.has(key)) return false;
     if (typeof value === "boolean") return value;
     return String(value ?? "").trim() !== "";
   });
@@ -295,8 +414,18 @@ export default function AddPatientWizard({
 }: Props) {
   const [step, setStep] = React.useState<1 | 2>(1);
   const [duplicateError, setDuplicateError] = React.useState<string | null>(null);
+  const [savedToast, setSavedToast] = React.useState<string | null>(null);
 
   const page = usePage<any>();
+  const currentUserBarangay = React.useMemo(() => {
+    return normalizeStringForCompare(
+      page?.props?.auth?.user?.barangay ||
+      page?.props?.user?.barangay ||
+      page?.props?.authUser?.barangay ||
+      ""
+    );
+  }, [page]);
+
   const existingPatients: any[] = React.useMemo(() => {
     if (page?.props?.patients && Array.isArray(page.props.patients.data)) {
       return page.props.patients.data as any[];
@@ -315,6 +444,8 @@ export default function AddPatientWizard({
   );
 
   const form = useForm(mergedInitialData);
+  const isImmunization = form.data.patient_type === "immunization";
+  const isPregnancy = form.data.patient_type === "pregnancy";
   const didRestoreDraftRef = React.useRef(false);
   const shouldClearDraftOnCloseRef = React.useRef(false);
 
@@ -325,6 +456,7 @@ export default function AddPatientWizard({
       form.reset();
       form.clearErrors();
       setDuplicateError(null);
+      setSavedToast(null);
 
       if (shouldClearDraftOnCloseRef.current) {
         sessionStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -336,6 +468,7 @@ export default function AddPatientWizard({
     form.setData({ ...mergedInitialData });
     form.clearErrors();
     setDuplicateError(null);
+    setSavedToast(null);
     setStep(mergedInitialData.patient_type ? 2 : 1);
   }, [open, mergedInitialData]);
 
@@ -372,6 +505,15 @@ export default function AddPatientWizard({
       form.setData("age", autoAge);
     }
   }, [form.data.birthdate]);
+
+  React.useEffect(() => {
+    if (!open || !isImmunization) return;
+    if (form.data.health_center) return;
+
+    const sourceBarangay = form.data.barangay || currentUserBarangay;
+    const suggested = suggestedHealthCenterForBarangay(sourceBarangay);
+    if (suggested) form.setData("health_center", suggested);
+  }, [currentUserBarangay, form.data.barangay, form.data.health_center, isImmunization, open]);
 
   const hasUnsavedChanges = React.useMemo(() => hasMeaningfulDraft(form.data), [form.data]);
 
@@ -435,12 +577,20 @@ export default function AddPatientWizard({
     };
   }, [open]);
 
-  const isImmunization = form.data.patient_type === "immunization";
-  const isPregnancy = form.data.patient_type === "pregnancy";
+  React.useEffect(() => {
+    if (!savedToast) return;
+
+    const timer = window.setTimeout(() => {
+      setSavedToast(null);
+    }, 3500);
+
+    return () => window.clearTimeout(timer);
+  }, [savedToast]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setDuplicateError(null);
+    setSavedToast(null);
 
     if (!form.data.patient_type) {
       setStep(1);
@@ -482,17 +632,19 @@ export default function AddPatientWizard({
     const payload: any = {
       ...form.data,
       full_name: fullName,
+      first_name: first,
+      middle_name: middle,
+      last_name: last,
       suffix: finalSuffix,
+      sex: form.data.patient_type === "pregnancy" ? "Female" : form.data.sex,
       address: combinedAddress,
       birthdate: dateOnly(form.data.birthdate),
       phone: trimmedPhone,
       contact_no: trimmedPhone,
-      age: form.data.age === "" ? null : Number(form.data.age),
-      child_height_cm:
-        form.data.child_height_cm === "" ? null : Number(form.data.child_height_cm),
-      birth_weight_kg:
-        form.data.birth_weight_kg === "" ? null : Number(form.data.birth_weight_kg),
-      height_cm: form.data.height_cm === "" ? null : Number(form.data.height_cm),
+      age: calculateAgeYears(form.data.birthdate),
+      child_height_cm: convertHeightToCm(form.data.child_height_cm, form.data.child_height_unit),
+      birth_weight_kg: convertWeightToKg(form.data.birth_weight_kg, form.data.birth_weight_unit),
+      height_cm: convertHeightToCm(form.data.height_cm, form.data.height_unit),
       philhealth_no: (form.data.philhealth_no || "").replace(/\D/g, "").slice(0, 12),
 
       date_of_registration: dateOnly(form.data.date_of_registration),
@@ -510,6 +662,9 @@ export default function AddPatientWizard({
     delete payload.address_postal_code;
     delete payload.suffix_other;
     delete payload.phone;
+    delete payload.child_height_unit;
+    delete payload.birth_weight_unit;
+    delete payload.height_unit;
 
     if (existingPatients.length > 0) {
       const newFullName = normalizeFullNameForCompare(fullName);
@@ -566,46 +721,64 @@ export default function AddPatientWizard({
       }
     }
 
-    form.post("/patients", {
-      data: payload,
-      preserveScroll: true,
-      onError: (errs) => {
-        setStep(2);
-        const firstKey = Object.keys(errs)[0];
-        if (firstKey) {
-          const scrollName = firstKey === "full_name" ? "first_name" : firstKey;
-          const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-            `[name="${scrollName}"]`
-          );
-          el?.scrollIntoView({ behavior: "smooth", block: "center" });
-          el?.focus();
-        }
-      },
-      onSuccess: () => {
-        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+    const continueSubmit = () => {
+      form.transform(() => payload);
 
-        if (form.data.stay) {
-          const type = form.data.patient_type;
-
-          form.setData({
-            ...getInitialFormData(),
-            patient_type: type,
-            address_province: "Cavite",
-            address_city: "Silang",
-            stay: true,
-          });
-
+      form.post("/patients", {
+        preserveScroll: true,
+        onError: (errs) => {
           setStep(2);
-        } else {
-          shouldClearDraftOnCloseRef.current = true;
-          form.setData(getInitialFormData());
-          form.clearErrors();
-          setDuplicateError(null);
-          setStep(1);
-          onOpenChange(false);
-        }
-      },
-    });
+          const firstKey = Object.keys(errs)[0];
+          if (firstKey) {
+            const scrollName = firstKey === "full_name" ? "first_name" : firstKey;
+            const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+              `[name="${scrollName}"]`
+            );
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            el?.focus();
+          }
+        },
+        onSuccess: () => {
+          sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+
+          if (payload.stay) {
+            form.setData({
+              ...getInitialFormData(),
+              address_province: "Cavite",
+              address_city: "Silang",
+              stay: true,
+            });
+            form.clearErrors();
+            setDuplicateError(null);
+            setSavedToast("Patient record saved. Select another patient type to add the next record.");
+            setStep(1);
+          } else {
+            shouldClearDraftOnCloseRef.current = true;
+            form.setData(getInitialFormData());
+            form.clearErrors();
+            setDuplicateError(null);
+            setStep(1);
+            onOpenChange(false);
+          }
+        },
+      });
+    };
+
+    if (isPregnancy && !payload.philhealth_no) {
+      void confirm({
+        title: "Save without PhilHealth number?",
+        message:
+          "This patient record will be saved, but please update the PhilHealth number later when the patient remembers it.",
+        confirmText: "Save anyway",
+        cancelText: "Go back",
+        autoFocus: "cancel",
+      }).then((ok) => {
+        if (ok) continueSubmit();
+      });
+      return;
+    }
+
+    continueSubmit();
   }
 
   if (!open) return null;
@@ -620,6 +793,34 @@ export default function AddPatientWizard({
       }}
     >
       <div className="absolute inset-0 bg-black/50" onClick={() => void requestClose()} />
+
+      {savedToast && (
+        <div className="pointer-events-none fixed inset-x-0 top-6 z-[120] flex justify-center px-4">
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-auto w-full max-w-md rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-emerald-900 shadow-2xl ring-1 ring-black/5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                ✓
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Saved successfully</div>
+                <p className="mt-0.5 text-sm text-emerald-800">{savedToast}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSavedToast(null)}
+                className="pointer-events-auto rounded-lg px-2 text-lg leading-6 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]"
+                aria-label="Close saved message"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div
         role="dialog"
@@ -678,6 +879,7 @@ export default function AddPatientWizard({
               <StepOne
                 value={form.data.patient_type}
                 onPick={(v) => {
+                  setSavedToast(null);
                   form.setData("patient_type", v);
                   setStep(2);
                 }}
@@ -705,12 +907,10 @@ export default function AddPatientWizard({
                         type="button"
                         onClick={() => {
                           const type = form.data.patient_type;
-                          form.reset();
                           form.clearErrors();
-                          form.setData("patient_type", type);
-                          form.setData("address_province", "Cavite");
-                          form.setData("address_city", "Silang");
+                          form.setData(clearPatientEntryData(form.data));
                           setDuplicateError(null);
+                          setSavedToast(null);
                           setStep(type ? 2 : 1);
                           if (!prefill) sessionStorage.removeItem(DRAFT_STORAGE_KEY);
                         }}
@@ -892,7 +1092,7 @@ function StepTwo({
                 />
                 <PhilhealthField
                   name="philhealth_no"
-                  label="PhilHealth Number *"
+                  label="PhilHealth Number"
                   value={form.data.philhealth_no}
                   onChange={(v) => form.setData("philhealth_no", v)}
                   error={form.errors.philhealth_no}
@@ -1076,25 +1276,27 @@ function StepTwo({
                   label="Age"
                   value={form.data.age}
                 />
-                <NumberField
+                <MeasurementField
                   name="child_height_cm"
-                  label="Height (CM)"
-                  step="0.1"
+                  label="Height"
                   value={form.data.child_height_cm as string}
+                  unit={form.data.child_height_unit}
+                  units={["CM", "FT"]}
                   onChange={(v) => form.setData("child_height_cm", v)}
-                  placeholder="50"
+                  onUnitChange={(v) => form.setData("child_height_unit", v as "CM" | "FT")}
+                  placeholder={form.data.child_height_unit === "FT" ? "1.64" : "50.5"}
                   error={form.errors.child_height_cm}
-                  max={120}
                 />
-                <NumberField
+                <MeasurementField
                   name="birth_weight_kg"
-                  label="Birth Weight (KG)"
-                  step="0.01"
+                  label="Birth Weight"
                   value={form.data.birth_weight_kg as string}
+                  unit={form.data.birth_weight_unit}
+                  units={["KG", "G"]}
                   onChange={(v) => form.setData("birth_weight_kg", v)}
-                  placeholder="3.20"
+                  onUnitChange={(v) => form.setData("birth_weight_unit", v as "KG" | "G")}
+                  placeholder={form.data.birth_weight_unit === "G" ? "3200" : "3.20"}
                   error={form.errors.birth_weight_kg}
-                  max={8}
                 />
                 <CPABField
                   value={form.data.cpab}
@@ -1154,15 +1356,17 @@ function StepTwo({
                   label="Age"
                   value={form.data.age}
                 />
-                <NumberField
+                <MeasurementField
                   name="height_cm"
-                  label="Height (CM) *"
-                  step="1"
+                  label="Height"
                   value={form.data.height_cm as any}
+                  unit={form.data.height_unit}
+                  units={["CM", "FT"]}
                   onChange={(v) => form.setData("height_cm", v)}
-                  placeholder="152"
+                  onUnitChange={(v) => form.setData("height_unit", v as "CM" | "FT")}
+                  placeholder={form.data.height_unit === "FT" ? "5.2" : "152.5"}
                   error={form.errors.height_cm}
-                  max={300}
+                  required
                 />
                 <CivilStatusField
                   value={form.data.civil_status}
@@ -1396,6 +1600,64 @@ function TextField(props: {
   );
 }
 
+function MeasurementField(props: {
+  name: string;
+  label: string;
+  value: string;
+  unit: string;
+  units: string[];
+  onChange: (v: string) => void;
+  onUnitChange: (v: string) => void;
+  placeholder?: string;
+  error?: string;
+  required?: boolean;
+}) {
+  const { name, label, value, unit, units, onChange, onUnitChange, placeholder, error, required } = props;
+  const [localError, setLocalError] = React.useState<string | null>(null);
+  const borderCls = error || localError ? CONTROL_ERROR : CONTROL_BORDER;
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value.replace(/[^0-9.,]/g, "").replace(/,/g, ".");
+    onChange(next);
+
+    if (next && parseFlexibleDecimal(next) === null) {
+      setLocalError("Enter a valid number.");
+    } else {
+      setLocalError(null);
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">
+        {renderFieldLabel(`${label} (${unit})`, required)}
+      </label>
+      <div className="grid grid-cols-[minmax(0,1fr)_84px] gap-2">
+        <input
+          name={name}
+          type="text"
+          inputMode="decimal"
+          value={value ?? ""}
+          onChange={handleChange}
+          placeholder={placeholder}
+          className={`w-full ${CONTROL} ${borderCls}`}
+        />
+        <select
+          value={unit}
+          onChange={(e) => onUnitChange(e.target.value)}
+          className={`w-full ${CONTROL} ${borderCls}`}
+          aria-label={`${label} unit`}
+        >
+          {units.map((u) => (
+            <option key={u} value={u}>{u}</option>
+          ))}
+        </select>
+      </div>
+      {(error || localError) && <p className="text-sm text-red-600 mt-1">{error || localError}</p>}
+    </div>
+  );
+}
+
 function NumberField(props: {
   name: string;
   label: string;
@@ -1459,7 +1721,7 @@ function DateField({
   maxToday?: boolean;
   required?: boolean;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = useLocalTodayDate();
   const borderCls = error ? CONTROL_ERROR : CONTROL_BORDER;
 
   return (
@@ -1493,7 +1755,7 @@ function DateFieldWithToday({
   error?: string;
   required?: boolean;
 }) {
-  const today = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useLocalTodayDate();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -1505,9 +1767,9 @@ function DateFieldWithToday({
   const borderCls = error ? CONTROL_ERROR : CONTROL_BORDER;
 
   return (
-    <div>
+    <div className="min-w-0">
       <label className="block text-sm font-medium text-slate-700 mb-1">{renderFieldLabel(label, required)}</label>
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_auto] gap-2">
         <input
           name={name}
           type="date"
@@ -1519,7 +1781,7 @@ function DateFieldWithToday({
         <button
           type="button"
           onClick={() => onChange(today)}
-          className={`w-full sm:w-auto min-w-[92px] ${CONTROL_BTN} border border-slate-300 text-[13px] text-slate-700 bg-slate-50 hover:bg-slate-100 hover:border-[#0F8A99]/70 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]`}
+          className={`w-full 2xl:w-auto 2xl:min-w-[76px] ${CONTROL_BTN} border border-slate-300 text-[13px] text-slate-700 bg-slate-50 hover:bg-slate-100 hover:border-[#0F8A99]/70 focus:outline-none focus:ring-2 focus:ring-[#0F8A99]`}
         >
           TODAY
         </button>
@@ -1693,7 +1955,7 @@ function SegmentedButtons({
             <button
               key={opt.value}
               type="button"
-              onClick={() => onChange(opt.value)}
+              onClick={() => onChange(active ? "" : opt.value)}
               className={`${CONTROL_BTN} w-full border text-sm font-semibold flex items-center justify-center transition ${active
                 ? "bg-[#0F8A99] text-white border-[#0F8A99]"
                 : "bg-white text-slate-700 border-slate-300 hover:border-[#0F8A99]/70"
@@ -1921,8 +2183,12 @@ function PhilhealthField({
         placeholder="XX-XXXXXXXXX-X"
         inputMode="numeric"
         className={`w-full ${CONTROL} tracking-[0.14em] ${borderCls}`}
-        required
       />
+      {!digits && !error && !localError && (
+        <p className="text-xs text-amber-700 mt-1">
+          Can be saved empty if the patient cannot remember it. Update this later.
+        </p>
+      )}
       {(error || localError) && <p className="text-sm text-red-600 mt-1">{error || localError}</p>}
     </div>
   );

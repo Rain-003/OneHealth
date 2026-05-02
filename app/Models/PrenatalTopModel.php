@@ -13,6 +13,7 @@ class PrenatalTopModel extends Model
     protected $table = 'prenatal_top';
 
     protected $fillable = [
+        'pregnancy_id',
         'patient_id',
         'barangay',
         'lmp','edc','ob_g','ob_p','ob_gtpal',

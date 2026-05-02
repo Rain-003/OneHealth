@@ -382,18 +382,18 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
   }) => (
     <div>
       <Label className="mb-1">{label}</Label>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input
           type="date"
           value={form[name] || ""}
           onInput={(e) => touch(name, (e.target as HTMLInputElement).value)}
-          className={inputLg}
+          className={[inputLg, "w-full min-w-0"].join(" ")}
           disabled={locked}
         />
         <button
           type="button"
           onClick={() => setToday(name)}
-          className="h-11 rounded-md border border-slate-300 px-3 text-[14px] hover:bg-slate-50 disabled:opacity-60"
+          className="min-h-[44px] rounded-md border border-slate-300 px-3 text-[14px] hover:bg-slate-50 disabled:opacity-60 sm:h-11"
           disabled={locked}
         >
           Today
@@ -401,7 +401,7 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
         <button
           type="button"
           onClick={() => clearField(name)}
-          className="h-11 rounded-md border border-slate-300 px-3 text-[14px] hover:bg-slate-50 disabled:opacity-60"
+          className="min-h-[44px] rounded-md border border-slate-300 px-3 text-[14px] hover:bg-slate-50 disabled:opacity-60 sm:h-11"
           disabled={locked}
         >
           Clear
@@ -415,49 +415,45 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
       <div className="mx-auto w-full max-w-screen-2xl px-2 sm:px-3 lg:px-6 flex-1 overflow-x-hidden">
         {/* Header like Pregnancy Details / Birth Plan, with teal square lock */}
         <div className="mt-1 mb-2">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <h2 className="text-[18px] sm:text-[20px] font-semibold text-slate-900 tracking-tight">
+              <h2 className="text-[18px] font-semibold text-slate-900 tracking-tight">
                 Tetanus Toxoid &amp; Vitamin A
               </h2>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <span
                 ref={statusRef}
                 className="text-[11px] sm:text-[12px] text-slate-600"
                 aria-live="polite"
               />
-              {canEdit && (<button
-                type="button"
-                onClick={() => setLocked((prev) => !prev)}
-                className={[
-                  "inline-flex h-9 w-9 items-center justify-center rounded-lg border text-slate-700 shadow-sm transition",
-                locked
-                  ? "border-slate-300 bg-white hover:bg-slate-50"
-                  : "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0d7481]",
-                ].join(" ")}
-                style={
-                  locked
-                    ? undefined
-                    : { backgroundColor: TEAL, borderColor: TEAL }
-                }
-                title={locked ? "Click to enable editing" : "Click to lock"}
-                aria-pressed={!locked ? "true" : "false"}
-              >
-                {locked ? (
-                  <IconLock className="h-4 w-4" />
-                ) : (
-                  <IconUnlock className="h-4 w-4" />
-                )}
-              </button>)}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => setLocked((prev) => !prev)}
+                  className={[
+                    "inline-flex h-10 min-w-[112px] items-center justify-center gap-1.5 rounded-md border px-3 sm:h-9",
+                    "text-xs font-semibold shadow-sm transition",
+                    "focus:outline-none focus:ring-2 focus:ring-[#0F8A99]/30",
+                    locked
+                      ? "border-[#0F8A99] bg-[#0F8A99] text-white hover:bg-[#0e7c8a]"
+                      : "border-[#0F8A99] bg-white text-[#0F8A99] hover:bg-[#0F8A99]/5",
+                  ].join(" ")}
+                  aria-pressed={!locked ? "true" : "false"}
+                  title={locked ? "Locked - click to enable editing" : "Editing - click to lock"}
+                >
+                  {locked ? <IconLock className="h-4 w-4" /> : <IconUnlock className="h-4 w-4" />}
+                  <span>{locked ? "Locked" : "Editing"}</span>
+                </button>
+              )}
             </div>
           </div>
-          <div className="mt-2 h-px w-full bg-slate-200" />
+          <div className="mt-3 h-px w-full bg-slate-200" />
         </div>
 
         {/* 🔒 LOCKED BANNER (like the other pages) */}
         {locked && (
-          <div className="mt-3 mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-[13px] text-slate-700">
+          <div className="mt-3 mb-2 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs sm:text-[13px] text-slate-700">
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600">
               <IconLock className="h-3 w-3" />
             </span>
@@ -472,7 +468,7 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
         <div
           ref={errorRef}
           style={{ display: "none" }}
-          className="mx-3 sm:mx-4 mt-3 rounded-[6px] border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700"
+          className="mt-3 rounded-[6px] bg-rose-50 px-3 py-2 text-[13px] text-rose-700"
         />
 
         {/* Dimming + blocking when locked */}
@@ -483,11 +479,11 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
         >
           <div className={locked ? "pointer-events-none" : ""}>
             {/* Shell */}
-            <section className="mt-2 rounded-md bg-white shadow-sm divide-y divide-slate-200 overflow-hidden">
+            <section className="mt-3">
               <form
                 ref={formRef}
                 onSubmit={onSubmit}
-                className="p-3 sm:p-4 space-y-4"
+                className="space-y-4 pb-4"
               >
                 <div className="grid gap-3 sm:gap-4 md:grid-cols-3">
                   <FieldDate name="tt1_date" label="TT1" />
@@ -515,7 +511,7 @@ export default function ITRTTVitA({ patientId }: { patientId: number }) {
               mb-0.5
               inline-flex
               w-full sm:w-auto                
-              rounded-t-md border border-slate-200
+              rounded-t-md border-t border-slate-200
               bg-white/95 backdrop-blur shadow-sm
               px-3 sm:px-4 py-2
               pointer-events-auto

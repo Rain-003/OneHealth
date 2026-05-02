@@ -9,6 +9,10 @@ import BackIcon from "/public/build/assets/back-outline-svgrepo-com.svg";
 type Patient = {
   id: number | string;
   full_name?: string | null;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  suffix?: string | null;
   birthdate?: string | null;
   patient_type?: string | null;
 };
@@ -91,6 +95,78 @@ function fmtAnnDate(iso?: string | null) {
     month: "short",
     day: "2-digit",
   });
+}
+
+function cleanNamePart(v?: string | null) {
+  return String(v ?? "").trim().replace(/\s+/g, " ");
+}
+
+function middleInitial(v?: string | null) {
+  const middle = cleanNamePart(v);
+  if (!middle) return "";
+  const firstMiddleWord = middle.split(" ").find(Boolean) ?? "";
+  const firstLetter = firstMiddleWord.charAt(0);
+  return firstLetter ? `${firstLetter.toUpperCase()}.` : "";
+}
+
+function splitLegacyFullName(fullName?: string | null) {
+  const raw = cleanNamePart(fullName);
+  if (!raw) return { first_name: "", middle_name: "", last_name: "", suffix: "" };
+
+  const suffixSet = new Set(["JR", "SR", "II", "III", "IV", "V"]);
+  const parts = raw.split(" ").filter(Boolean);
+
+  let suffix = "";
+  const lastToken = parts[parts.length - 1]?.replace(/\./g, "").toUpperCase();
+  if (lastToken && suffixSet.has(lastToken)) {
+    suffix = parts.pop() ?? "";
+  }
+
+  if (parts.length === 1) {
+    return { first_name: parts[0] ?? "", middle_name: "", last_name: "", suffix };
+  }
+
+  if (parts.length === 2) {
+    return { first_name: parts[0] ?? "", middle_name: "", last_name: parts[1] ?? "", suffix };
+  }
+
+  return {
+    first_name: parts[0] ?? "",
+    middle_name: parts.slice(1, -1).join(" "),
+    last_name: parts[parts.length - 1] ?? "",
+    suffix,
+  };
+}
+
+function formatPatientDisplayName(patient?: Patient | null) {
+  if (!patient) return "PATIENT";
+
+  const fallback = splitLegacyFullName(patient.full_name);
+  const first = cleanNamePart(patient.first_name) || fallback.first_name;
+  const middle = cleanNamePart(patient.middle_name) || fallback.middle_name;
+  const last = cleanNamePart(patient.last_name) || fallback.last_name;
+  const suffix = cleanNamePart(patient.suffix) || fallback.suffix;
+
+  if (last && first) {
+    return [
+      `${last},`,
+      first,
+      middleInitial(middle),
+      suffix ? `, ${suffix}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+,/g, ",")
+      .toUpperCase();
+  }
+
+  return cleanNamePart(patient.full_name).toUpperCase() || "PATIENT";
+}
+
+function formatPatientGreetingName(patient?: Patient | null) {
+  if (!patient) return "PATIENT";
+  const fallback = splitLegacyFullName(patient.full_name);
+  return (cleanNamePart(patient.first_name) || fallback.first_name || cleanNamePart(patient.full_name) || "PATIENT").toUpperCase();
 }
 
 /* --------------------- Cohesive outline icons (no fills) --------------------- */
@@ -177,6 +253,7 @@ function PatientNavbar({ username }: { username?: string }) {
   // Modals
   const [announcementsOpen, setAnnouncementsOpen] = React.useState(false);
   const [scheduleOpen, setScheduleOpen] = React.useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = React.useState(false);
 
   // Which announcement is currently selected (for detail view)
   const [activeAnnouncementId, setActiveAnnouncementId] =
@@ -184,17 +261,18 @@ function PatientNavbar({ username }: { username?: string }) {
 
   // Close modals with Escape key
   React.useEffect(() => {
-    if (!announcementsOpen && !scheduleOpen) return;
+    if (!announcementsOpen && !scheduleOpen && !logoutConfirmOpen) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setAnnouncementsOpen(false);
         setScheduleOpen(false);
+        setLogoutConfirmOpen(false);
         setActiveAnnouncementId(null);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [announcementsOpen, scheduleOpen]);
+  }, [announcementsOpen, scheduleOpen, logoutConfirmOpen]);
 
   // Active announcements only
   const announcements = React.useMemo(
@@ -247,95 +325,150 @@ function PatientNavbar({ username }: { username?: string }) {
     setScheduleOpen(true);
   }, []);
 
-  const Shell = () => (
-    <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur px-4 py-3 shadow">
-      {/* LEFT: actions (announcements, schedule, exit) */}
-      <div className="flex items-center gap-2 md:gap-3">
-        {/* Exit button (logout POST) */}
-        <form method="post" action="/patient/logout">
+  const submitLogout = React.useCallback(() => {
+    const form = document.getElementById("patient-logout-form") as HTMLFormElement | null;
+    form?.submit();
+  }, []);
+
+  const Shell = () => {
+    const navBtn =
+      "relative inline-flex h-10 min-w-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-400/60 hover:bg-teal-50/40 hover:shadow-[0_16px_40px_rgba(15,138,153,0.12)] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 sm:h-11 md:min-w-[120px]";
+
+    return (
+      <div className="grid min-h-[58px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur sm:px-3 lg:px-4">
+        <form id="patient-logout-form" method="post" action="/patient/logout" className="hidden">
           <input type="hidden" name="_token" value={csrf} />
+        </form>
+
+        {/* Exit stays on the far-left side of the navbar. */}
+        <div className="flex min-w-0 items-center justify-start">
           <button
-            type="submit"
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[14px] md:text-[15px] font-semibold text-slate-800 shadow-sm hover:-translate-y-0.5 hover:border-teal-400/60 hover:shadow-[0_16px_40px_rgba(15,138,153,0.12)] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            type="button"
+            onClick={() => setLogoutConfirmOpen(true)}
+            className={navBtn}
             aria-label="Exit to Home"
             title="Exit"
           >
             <img
               src={BackIcon}
               alt=""
-              className="h-6 w-6 -ml-0.5"
+              className="h-5 w-5 shrink-0 md:h-6 md:w-6"
               aria-hidden="true"
               draggable={false}
             />
-            <span className="tracking-wide">Exit</span>
+            <span className="hidden tracking-wide md:inline">Exit</span>
           </button>
-        </form>
-
-        {/* Announcements bell */}
-        <button
-          type="button"
-          onClick={handleOpenAnnouncements}
-          className="relative grid h-9 w-9 md:h-10 md:w-10 place-items-center rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow-md active:translate-y-[1px] transition focus:outline-none focus:ring-2 focus:ring-teal-600"
-          aria-label="View announcements"
-        >
-          <IconBell className="h-4 w-4 md:h-5 md:w-5 text-slate-700" />
-          {unseenCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-pink-400 px-[3px] text-[9px] font-semibold text-white ring-2 ring-white shadow-sm">
-              {unseenLabel}
-            </span>
-          )}
-        </button>
-
-        {/* Inbox / schedule icon */}
-        <button
-          type="button"
-          onClick={handleOpenSchedule}
-          className="relative grid h-9 w-9 md:h-10 md:w-10 place-items-center rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow-md active:translate-y-[1px] transition focus:outline-none focus:ring-2 focus:ring-teal-600"
-          aria-label="View upcoming schedule"
-        >
-          <IconInbox className="h-4 w-4 md:h-5 md:w-5 text-slate-700" />
-          {upcomingCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-pink-400 px-[3px] text-[9px] font-semibold text-white ring-2 ring-white shadow-sm">
-              {upcomingLabel}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* optional center nav placeholder */}
-      <nav className="mx-2 hidden flex-1 items-center justify-center gap-9 md:flex" />
-
-      {/* RIGHT: brand / logo */}
-      <Link
-        href="/patient/dashboard"
-        className="ml-auto flex items-center gap-3"
-      >
-        <img
-          src={Logo}
-          alt="OneHealth logo"
-          className="h-9 w-9 rounded-xl select-none"
-          draggable={false}
-        />
-        <div className="leading-tight hidden sm:block">
-          <div className="text-[16px] md:text-[18px] font-semibold tracking-wide text-[#203D7A]">
-            ONE HEALTH
-          </div>
-          <div className="text-[11px] md:text-[12px] uppercase tracking-wider text-slate-500">
-            Patient
-          </div>
         </div>
-      </Link>
-    </div>
-  );
+
+        {/* Centered navigation. Mobile keeps icons compact; larger screens show full button names. */}
+        <nav className="flex min-w-0 items-center justify-center gap-1.5 overflow-x-auto px-1 sm:gap-2 md:overflow-visible md:px-0">
+          <button
+            type="button"
+            onClick={handleOpenAnnouncements}
+            className={navBtn}
+            aria-label="Bell Announcements"
+            title="Announcements"
+          >
+            <IconBell className="h-5 w-5 shrink-0 text-slate-700" />
+            <span className="hidden whitespace-nowrap md:inline">Announcements</span>
+            {unseenCount > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-pink-500 px-[3px] text-[9px] font-semibold text-white ring-2 ring-white shadow-sm">
+                {unseenLabel}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOpenSchedule}
+            className={navBtn}
+            aria-label="Inbox"
+            title="Inbox"
+          >
+            <IconInbox className="h-5 w-5 shrink-0 text-slate-700" />
+            <span className="hidden whitespace-nowrap md:inline">Inbox</span>
+            {upcomingCount > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-pink-500 px-[3px] text-[9px] font-semibold text-white ring-2 ring-white shadow-sm">
+                {upcomingLabel}
+              </span>
+            )}
+          </button>
+        </nav>
+
+        <Link
+          href="/patient/dashboard"
+          className="ml-auto flex min-w-0 items-center justify-end gap-2 sm:gap-3"
+          aria-label="One Health Patient Dashboard"
+        >
+          <img
+            src={Logo}
+            alt="OneHealth logo"
+            className="h-9 w-9 shrink-0 rounded-xl select-none sm:h-10 sm:w-10"
+            draggable={false}
+          />
+          <div className="hidden min-w-0 leading-tight sm:block">
+            <div className="truncate text-[15px] font-semibold tracking-wide text-[#203D7A] md:text-[18px]">
+              ONE HEALTH
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 md:text-[12px]">
+              Patient
+            </div>
+          </div>
+        </Link>
+      </div>
+    );
+  };
 
   return (
     <>
       {/* Sticky navbar (like schedule page) */}
       <header className="sticky top-0 z-50 bg-transparent">
-        <div className="mx-auto max-w-7xl px-4 pt-3 pb-2">
+        <div className="mx-auto w-full max-w-7xl px-3 pt-2 pb-1.5 sm:px-4 lg:px-6">
           <Shell />
         </div>
       </header>
+
+      {/* Exit / Logout Confirmation Modal */}
+      {logoutConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/40 px-4"
+          onClick={() => setLogoutConfirmOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-exit-title"
+            className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 id="patient-exit-title" className="text-base font-semibold text-[#203D7A]">
+                Exit patient portal?
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                You will need to access your account again to view your records.
+              </p>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 px-5 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setLogoutConfirmOpen(false)}
+                className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-600"
+              >
+                Stay here
+              </button>
+              <button
+                type="button"
+                onClick={submitLogout}
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0F8A99] px-4 text-sm font-semibold text-white shadow-sm hover:bg-[#0c7480] focus:outline-none focus:ring-2 focus:ring-teal-600"
+              >
+                Yes, exit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Announcements Modal */}
       {announcementsOpen && (
@@ -652,7 +785,8 @@ export default function PatientDashboard({
   appointments?: Appointment[];
   announcements?: Announcement[];
 }) {
-  const username = patient?.full_name?.toUpperCase?.() ?? "USERPATIENT1";
+  const username = formatPatientDisplayName(patient);
+  const greetingName = formatPatientGreetingName(patient);
   const type = String(patient?.patient_type || "").trim().toLowerCase();
   const isPrenatal = ["pregnancy", "prenatal", "pregnant"].includes(type);
 
@@ -688,10 +822,10 @@ export default function PatientDashboard({
       <Link
         href={href}
         aria-label={ariaLabel || labelTop}
-        className="group flex w-full min-h-[168px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-[#203D7A] shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99]"
+        className="group flex w-full min-h-[132px] flex-col items-center justify-center rounded-2xl bg-white p-4 text-[#203D7A] shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:ring-[#0F8A99]/30 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99] sm:min-h-[148px] lg:min-h-[176px]"
       >
-        <div className="mb-3 grid h-16 w-16 place-items-center rounded-xl bg-[#0F8A99]/10">
-          <Icon className="h-9 w-9" />
+        <div className="mb-2 grid h-14 w-14 place-items-center rounded-2xl bg-[#0F8A99]/10 transition group-hover:bg-[#0F8A99]/15 sm:mb-3 sm:h-16 sm:w-16">
+          <Icon className="h-8 w-8 sm:h-9 sm:w-9" />
         </div>
         <div className="text-center text-[14px] md:text-[15px] font-medium tracking-wider opacity-90">
           {labelTop}
@@ -706,10 +840,10 @@ export default function PatientDashboard({
       <button
         type="button"
         onClick={onClick}
-        className="group flex w-full min-h-[168px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-[#203D7A] shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99]"
+        className="group flex w-full min-h-[132px] flex-col items-center justify-center rounded-2xl bg-white p-4 text-[#203D7A] shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:ring-[#0F8A99]/30 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99] sm:min-h-[148px] lg:min-h-[176px]"
       >
-        <div className="mb-3 grid h-16 w-16 place-items-center rounded-xl bg-[#0F8A99]/10">
-          <Icon className="h-9 w-9" />
+        <div className="mb-2 grid h-14 w-14 place-items-center rounded-2xl bg-[#0F8A99]/10 transition group-hover:bg-[#0F8A99]/15 sm:mb-3 sm:h-16 sm:w-16">
+          <Icon className="h-8 w-8 sm:h-9 sm:w-9" />
         </div>
         <div className="text-center text-[14px] md:text-[15px] font-medium tracking-wider opacity-90">
           {labelTop}
@@ -726,10 +860,10 @@ export default function PatientDashboard({
     <Link
       href={recordsHref}
       aria-label={`Open ${recordsSubLabel.toLowerCase()} records`}
-      className="group flex w-full min-h-[168px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-[#203D7A] shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99]"
+      className="group flex w-full min-h-[132px] flex-col items-center justify-center rounded-2xl bg-white p-4 text-[#203D7A] shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:ring-[#0F8A99]/30 hover:shadow-[0_16px_40px_rgba(16,24,40,0.10)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F8A99] sm:min-h-[148px] lg:min-h-[176px]"
     >
-      <div className="mb-3 grid h-16 w-16 place-items-center rounded-xl bg-[#0F8A99]/10">
-        <IconFileStack className="h-9 w-9" />
+      <div className="mb-2 grid h-14 w-14 place-items-center rounded-2xl bg-[#0F8A99]/10 transition group-hover:bg-[#0F8A99]/15 sm:mb-3 sm:h-16 sm:w-16">
+        <IconFileStack className="h-8 w-8 sm:h-9 sm:w-9" />
       </div>
       <div className="text-center text-[14px] md:text-[15px] font-medium tracking-wider opacity-90">
         RECORDS
@@ -742,7 +876,7 @@ export default function PatientDashboard({
 
   return (
     <div
-      className="relative min-h-dvh bg-white text-slate-900"
+      className="relative flex min-h-dvh flex-col bg-white text-slate-900"
       style={{
         fontFamily:
           "'Poppins', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'",
@@ -766,26 +900,24 @@ export default function PatientDashboard({
       <PatientNavbar username={username} />
 
       {/* MAIN */}
-      <main className="relative z-10 mx-auto max-w-7xl px-4 pb-20 pt-6">
+      <main className="relative z-10 mx-auto flex w-full flex-1 flex-col px-3 pb-6 pt-3 sm:px-4 md:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center py-4 sm:py-6 lg:py-10 xl:py-12">
         {/* Page heading */}
-        <header className="mb-6">
-          <h1 className="text-[22px] md:text-[28px] lg:text-[32px] font-semibold tracking-tight text-[#203D7A]">
-            Welcome,{" "}
-            <span className="whitespace-nowrap text-[22px] md:text-[28px] lg:text-[32px] font-semibold tracking-tight text-[#203D7A]">
-              {username}
-            </span>
+        <header className="mx-auto mb-4 w-full max-w-5xl text-center sm:mb-5">
+          <p className="text-[13px] font-medium uppercase tracking-[0.22em] text-slate-500 sm:text-[14px]">
+            Welcome
+          </p>
+          <h1 className="mt-1 break-words text-[26px] font-bold leading-tight tracking-tight text-[#203D7A] sm:text-[34px] md:text-[42px] lg:text-[48px]">
+            {username}
           </h1>
-          <div className="mt-2 inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-[12px] md:text-[13px] text-teal-900">
-            Patient Portal
-          </div>
         </header>
 
-        <h2 className="mb-6 text-center text-[13px] md:text-[14px] tracking-wider text-[#2F3E9A]">
+        <h2 className="mb-3 text-center text-[12px] font-medium tracking-[0.18em] text-[#2F3E9A] sm:mb-4 sm:text-[13px]">
           Below are your records
         </h2>
 
         {/* Action tiles */}
-        <section className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+        <section className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:gap-6">
           <TileBtn
             href="/patient/schedule"
             icon={IconCalendar}
@@ -798,10 +930,10 @@ export default function PatientDashboard({
         {/* Schedule preview */}
         <div
           id="schedule"
-          className="mt-12 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+          className="mx-auto mt-4 w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 sm:mt-5"
         >
-          <div className="px-6 py-4 border-b-2 border-slate-200 flex items-center justify-between">
-            <h3 className="text-[20px] md:text-[22px] font-semibold text-[#203D7A]">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5 sm:py-4">
+            <h3 className="text-[18px] font-semibold text-[#203D7A] sm:text-[20px] md:text-[22px]">
               Schedule
             </h3>
             <Link
@@ -812,7 +944,7 @@ export default function PatientDashboard({
             </Link>
           </div>
 
-          <div className="px-6 py-4 max-h-[360px] overflow-y-auto scroll-thin">
+          <div className="max-h-[340px] overflow-y-auto px-4 py-3 scroll-thin sm:px-5 sm:py-4 lg:max-h-[420px]">
             {preview.length ? (
               <ul className="divide-y divide-slate-200">
                 {preview.map((a) => {
@@ -846,8 +978,10 @@ export default function PatientDashboard({
           </div>
         </div>
 
+        </div>
+
         {/* Footer micro-brand */}
-        <div className="mx-auto mt-12 flex max-w-2xl items-center justify-between border-t border-slate-200 pt-6">
+        <div className="mx-auto mt-4 flex w-full max-w-3xl flex-col items-center justify-between gap-3 border-t border-slate-200 pt-5 sm:flex-row md:mt-auto">
           <div className="flex items-center gap-2">
             <img src={Logo} alt="OneHealth logo" className="h-8 w-8 rounded-lg" />
             <span className="text-sm font-semibold tracking-wide text-[#203D7A]">

@@ -4,7 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Concerns\BelongsToBarangayUser;
-use App\Enums\YesNo; // 👈 backed enum: 'oo' | 'hindi'
+use App\Enums\YesNo;
+use App\Models\Pregnancy;
 
 class CurrentPregnancy extends Model
 {
@@ -46,6 +47,8 @@ class CurrentPregnancy extends Model
         // keep if you still store extras
         'checks',
         'hr','rr','temp',
+
+        'pregnancy_id',
     ];
 
     protected $casts = [
